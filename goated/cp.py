@@ -1,9 +1,6 @@
 import pyttb as ttb
 import numpy as np
 
-# import goated.utils.exo as ex
-# import goated.utils.scalers as sc
-
 
 class CPObjective:
 

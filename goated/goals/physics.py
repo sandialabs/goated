@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from goated.goals.abstract import Goal, CPGoal
+from goated.goals.abstract import Goal
 
 
 def compute_momentum(X, var, time, exo, compute_deriv=False):

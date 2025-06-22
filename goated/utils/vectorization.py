@@ -25,10 +25,6 @@ def rolvec_to_ttensor(x, copy=False):
 
 
 def rolvec_to_ktensor(x, copy=False):
-    # if copy:
-    #     return ttb.ktensor(cpy.deepcopy(x.data))
-    # else:
-    #     return ttb.ktensor(x.data)
     return ttb.ktensor(x.data, copy=copy)
 
 
