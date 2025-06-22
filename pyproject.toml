@@ -1,0 +1,20 @@
+[build-system]
+requires = [
+    "setuptools"
+]
+
+[project]
+name = "goated"
+description = "A Python package for goal-oriented CP and Tucker tensor decomposition"
+dependences = [
+    "numpy",
+    "scipy",
+    "tqdm",
+    "pyttb",
+    "pyrol",
+    "dask"
+]
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+genten = [pygenten]
