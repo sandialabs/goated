@@ -1,8 +1,12 @@
-try:
-    import pygenten as gt # Have to load GenTen before numpy to get OpenMP speedup
-    have_genten = True
-except:
-    have_genten = False
+# try:
+#     import pygenten as gt # Have to load GenTen before numpy to get OpenMP speedup
+#     have_genten = True
+# except:
+#     have_genten = False
+
+## NOTE: If I import pygenten as installed from pip then I get an unrecoverable error (a sigtrap).
+#        So I'm just setting have_genten=False for now.
+have_genten = False
 
 import pyttb as ttb
 import numpy as np
@@ -27,7 +31,7 @@ class Goal:
         return F
     
     def computeDeriv(self, U):
-        val,jac = self.computeTarget(U,compute_deriv=True)
+        val,jac = self.computeTarget(U, compute_deriv=True)
         diff = val - self.target
         jac[np.ix_(range(jac.shape[0]),range(jac.shape[1]),self.var,self.time)] *= 2*np.reshape(diff,(1,1,1,len(self.time)))
         return jac

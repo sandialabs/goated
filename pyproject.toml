@@ -5,8 +5,9 @@ requires = [
 
 [project]
 name = "goated"
+version = "0.1.0"
 description = "A Python package for goal-oriented CP and Tucker tensor decomposition"
-dependences = [
+dependencies = [
     "numpy",
     "scipy",
     "tqdm",
@@ -17,4 +18,4 @@ dependences = [
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-genten = [pygenten]
+genten = ["pygenten"]
