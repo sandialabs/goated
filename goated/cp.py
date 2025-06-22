@@ -103,21 +103,8 @@ class CPObjective:
         self.recompute_prec = False
         return Pv
     
-"""
-A helper class that gets passed to GocchaObjective.
-Why is the name what it is? We'll never know ...
 
-See also: goated.goals.abstract::CPGoal.
-
-It seems that CPGoal2 serves the exact same purpose
-as CPGoal, with the exception that CPGoal is only used
-in run_gocp_opt.ipynb while run_gocp_rol.ipynb uses CPGoal2.
-
-So I can probably use CPGoal2 as a replacement for
-goated.goals.abstract::CPGoal and then remove it from
-this file.
-"""
-class CPGoal2:
+class CPGoal:
 
     def __init__(self, scaler, goals, weights):
         self.scaler = scaler

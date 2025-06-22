@@ -22,6 +22,25 @@ def build_parameter_list(output_level=1, status_test_iter_limit=10, general_kryl
     return params
 
 
+def build_cp_parameter_list():
+    params = pyrol.ParameterList()
+    params['General'] =  pyrol.ParameterList()
+    params['General']['Output Level'] = 1
+    params['General']['Secant'] = pyrol.ParameterList()
+    params['General']['Secant']['Type'] = "Limited-Memory BFGS"
+    params['General']['Secant']['Use as Preconditioner'] = False
+    params['General']['Secant']['Use as Hessian'] = False
+    params['General']['Secant']['Maximum Storage'] = 5
+    params['General']['Krylov'] = pyrol.ParameterList()
+    params['General']['Krylov']['Iteration Limit'] = 20
+    params['Step'] = pyrol.ParameterList()
+    params['Step']['Trust Region'] = pyrol.ParameterList()
+    params['Step']['Trust Region']['Subproblem Solver'] = 'Truncated CG'
+    params['Status Test'] = pyrol.ParameterList()
+    params['Status Test']['Iteration Limit'] = 10
+    return params
+
+
 class GotchaRolModel:
 
     def __init__(self, objective: Union[GotchaObjective, TuckerObjective], hosvd) -> None:

@@ -13,29 +13,29 @@ import pyttb as ttb
 
 class GotchaRolObjective(pyrol.Objective):
 
-    def __init__(self, precondition, gotcha):
+    def __init__(self, precondition, objective):
         super().__init__()
-        self._gotcha = gotcha
+        self._objective = objective
         self._precondition = precondition
 
     def update(self, x, update_type, iter):
         x = uvec.vec_to_ttensor(x)
-        self._gotcha.update(x)
+        self._objective.update(x)
 
     def value(self, x, tol):
         x = uvec.vec_to_ttensor(x)
-        return self._gotcha.value(x)
+        return self._objective.value(x)
 
     def gradient(self, g, x, tol):
         x = uvec.vec_to_ttensor(x)
-        temp = self._gotcha.gradient(x)
+        temp = self._objective.gradient(x)
         temp = uvec.ttensor_to_vec(temp)
         g.set(temp)
 
     def hessVec(self, hv, v, x, tol):
         x = uvec.vec_to_ttensor(x)
         v = uvec.vec_to_ttensor(v)
-        temp = self._gotcha.gn_hessvec(x,v)
+        temp = self._objective.gn_hessvec(x,v)
         temp = uvec.ttensor_to_vec(temp)
         hv.set(temp)
 
@@ -45,7 +45,7 @@ class GotchaRolObjective(pyrol.Objective):
             return
         x = uvec.vec_to_ttensor(x)
         v = uvec.vec_to_ttensor(v)
-        temp = self._gotcha.gn_bd_precvec(x,v)
+        temp = self._objective.gn_bd_precvec(x,v)
         temp = uvec.ttensor_to_vec(temp)
         pv.set(temp)
 
@@ -101,34 +101,31 @@ class GotchaRolObjective(pyrol.Objective):
         return H, Hpre
 
 
-"""
-TODO: figure out if this is needed.
-I think we can rely on GotchaRolObjective.
-"""
-class GOCP(pyrol.Objective):
 
-    def __init__(self, precondition, cp):
+class GocchaRolObjective(pyrol.Objective):
+
+    def __init__(self, precondition, objective):
         super().__init__()
-        self._cp = cp
+        self._objective = objective
         self._precondition = precondition
 
     def value(self, x, tol):
         x = ttb.ktensor(x.data)
-        self._cp.update(x)
-        return self._cp.value(x)
+        self._objective.update(x)
+        return self._objective.value(x)
 
     def gradient(self, g, x, tol):
         x = ttb.ktensor(x.data)
-        self._cp.update(x)
-        temp = self._cp.gradient(x)
+        self._objective.update(x)
+        temp = self._objective.gradient(x)
         temp = FactorVector(temp)
         g.set(temp)
 
     def hessVec(self, hv, v, x, tol):
         x = ttb.ktensor(x.data)
         v = ttb.ktensor(v.data)
-        self._cp.update(x)
-        temp = self._cp.hessvec(x,v)
+        self._objective.update(x)
+        temp = self._objective.hessvec(x,v)
         temp = FactorVector(temp)
         hv.set(temp)
 
@@ -138,7 +135,7 @@ class GOCP(pyrol.Objective):
             return
         x = ttb.ktensor(x.data)
         v = ttb.ktensor(v.data)
-        self._cp.update(x)
-        temp = self._cp.precvec(x,v)
+        self._objective.update(x)
+        temp = self._objective.precvec(x,v)
         temp = FactorVector(temp)
         pv.set(temp)
