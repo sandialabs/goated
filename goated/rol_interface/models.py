@@ -4,6 +4,7 @@ import pyrol
 import goated.rol_interface.objective as gro
 import goated.utils.vectorization as vu
 from goated.tucker import GotchaObjective, TuckerObjective
+from goated.cp import GocchaObjective, CPObjective
 from typing import Union
 
 
@@ -43,8 +44,8 @@ def build_cp_parameter_list():
 
 class GotchaRolModel:
 
-    def __init__(self, objective: Union[GotchaObjective, TuckerObjective], hosvd) -> None:
-        x = vu.ttensor_to_vec(hosvd, copy=True)
+    def __init__(self, objective: Union[GotchaObjective, TuckerObjective], initial_decomp) -> None:
+        x = vu.ttensor_to_rolvec(initial_decomp, copy=True)
         g = x.dual()
         self.objective = objective
         self._rol_x = x
@@ -62,6 +63,31 @@ class GotchaRolModel:
         self._rol_solver = pyrol.Solver(self._rol_problem, self._rol_params)
         stream = pyrol.getCout()
         self._rol_solver.solve(stream)
-        self.decomp = vu.vec_to_ttensor(self._rol_x)
+        self.decomp = vu.rolvec_to_ttensor(self._rol_x)
+        return
+
+
+class GocchaRolModel:
+
+    def __init__(self, objective: Union[GocchaObjective, CPObjective], initial_decomp) -> None:
+        x = vu.ktensor_to_rolvec(initial_decomp, copy=True)
+        g = x.dual()
+        self.objective = objective
+        self._rol_x = x
+        self._rol_g = g
+        self._rol_objective = None
+        self._rol_problem   = None
+        self._rol_params    = None
+        self._rol_solver    = None
+        return
+
+    def solve(self, rol_params=None, precondition=True):
+        self._rol_objective = gro.GocchaRolObjective(precondition, self.objective)
+        self._rol_problem   = pyrol.Problem(self._rol_objective, self._rol_x, self._rol_g)
+        self._rol_params = rol_params if rol_params is not None else build_cp_parameter_list()
+        self._rol_solver = pyrol.Solver(self._rol_problem, self._rol_params)
+        stream = pyrol.getCout()
+        self._rol_solver.solve(stream)
+        self.decomp = vu.rolvec_to_ktensor(self._rol_x)
         return
 

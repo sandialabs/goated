@@ -2,7 +2,7 @@ import numpy as np
 
 import pyrol
 import goated.utils.vectorization as uvec
-from goated.rol_interface.FactorVector import FactorVector
+from goated.rol_interface.CPVector import CPVector
 
 from tqdm import tqdm
 import dask
@@ -19,34 +19,34 @@ class GotchaRolObjective(pyrol.Objective):
         self._precondition = precondition
 
     def update(self, x, update_type, iter):
-        x = uvec.vec_to_ttensor(x)
+        x = uvec.rolvec_to_ttensor(x)
         self._objective.update(x)
 
     def value(self, x, tol):
-        x = uvec.vec_to_ttensor(x)
+        x = uvec.rolvec_to_ttensor(x)
         return self._objective.value(x)
 
     def gradient(self, g, x, tol):
-        x = uvec.vec_to_ttensor(x)
+        x = uvec.rolvec_to_ttensor(x)
         temp = self._objective.gradient(x)
-        temp = uvec.ttensor_to_vec(temp)
+        temp = uvec.ttensor_to_rolvec(temp)
         g.set(temp)
 
     def hessVec(self, hv, v, x, tol):
-        x = uvec.vec_to_ttensor(x)
-        v = uvec.vec_to_ttensor(v)
+        x = uvec.rolvec_to_ttensor(x)
+        v = uvec.rolvec_to_ttensor(v)
         temp = self._objective.gn_hessvec(x,v)
-        temp = uvec.ttensor_to_vec(temp)
+        temp = uvec.ttensor_to_rolvec(temp)
         hv.set(temp)
 
     def precond(self, pv, v, x, tol):
         if not self._precondition:
             pv.set(v)
             return
-        x = uvec.vec_to_ttensor(x)
-        v = uvec.vec_to_ttensor(v)
+        x = uvec.rolvec_to_ttensor(x)
+        v = uvec.rolvec_to_ttensor(v)
         temp = self._objective.gn_bd_precvec(x,v)
-        temp = uvec.ttensor_to_vec(temp)
+        temp = uvec.ttensor_to_rolvec(temp)
         pv.set(temp)
 
     def compute_hessian(self, x, parallel=False):
@@ -109,16 +109,19 @@ class GocchaRolObjective(pyrol.Objective):
         self._objective = objective
         self._precondition = precondition
 
-    def value(self, x, tol):
-        x = ttb.ktensor(x.data)
+    def update(self, x, update_type, iter):
+        x = uvec.rolvec_to_ktensor(x)
         self._objective.update(x)
+
+    def value(self, x, tol):
+        x = uvec.rolvec_to_ktensor(x)
         return self._objective.value(x)
 
     def gradient(self, g, x, tol):
         x = ttb.ktensor(x.data)
         self._objective.update(x)
         temp = self._objective.gradient(x)
-        temp = FactorVector(temp)
+        temp = uvec.ktensor_to_rolvec(temp)
         g.set(temp)
 
     def hessVec(self, hv, v, x, tol):
@@ -126,7 +129,7 @@ class GocchaRolObjective(pyrol.Objective):
         v = ttb.ktensor(v.data)
         self._objective.update(x)
         temp = self._objective.hessvec(x,v)
-        temp = FactorVector(temp)
+        temp = uvec.ktensor_to_rolvec(temp)
         hv.set(temp)
 
     def precond(self, pv, v, x, tol):
@@ -137,5 +140,5 @@ class GocchaRolObjective(pyrol.Objective):
         v = ttb.ktensor(v.data)
         self._objective.update(x)
         temp = self._objective.precvec(x,v)
-        temp = FactorVector(temp)
+        temp = uvec.ktensor_to_rolvec(temp)
         pv.set(temp)

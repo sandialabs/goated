@@ -8,7 +8,7 @@ from pyrol.getTypeName import *
 This is not a vector of a single factor.
 It's a vector of factors.
 """
-class FactorVector(getTypeName('Vector')):
+class CPVector(getTypeName('Vector')):
 
     def __init__(self, factors):
         # factors are a list of NumPy arrays
@@ -91,7 +91,7 @@ class FactorVector(getTypeName('Vector')):
 
     def clone(self):
         factors = copy.deepcopy(self.data)
-        c = FactorVector(factors)
+        c = CPVector(factors)
         c.zero()  # workaround -- clone allocates but does not initialize
         return c
 

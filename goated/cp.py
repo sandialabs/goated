@@ -99,7 +99,7 @@ class CPObjective:
             tmp = lin.solve_triangular(self.Vc[k], Ab[k].T, trans='T')
             tmp = lin.solve_triangular(self.Vc[k], tmp, trans='N', overwrite_b=True)
             Pv[k] = (self.s/2)*tmp.T
-
+        Pv = ttb.ktensor(Pv)
         self.recompute_prec = False
         return Pv
     
@@ -208,12 +208,14 @@ class GocchaObjective(CPObjective):
         G = super().gradient(M)
         Ggoal = self.goal.gradient(M)
         G = [self.a*G[i]+self.b*Ggoal.factor_matrices[i] for i in range(M.ndims)]
+        G = ttb.ktensor(G)
         return G
     
     def hessvec(self, M, V):
         Hv = super().hessvec(M,V)
         HvGoal = self.goal.hessvec(M,V)
         Hv = [self.a*Hv[i]+self.b*HvGoal.factor_matrices[i] for i in range(M.ndims)]
+        Hv = ttb.ktensor(Hv)
         return Hv
     
     def precvec(self, M, V):
