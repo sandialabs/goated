@@ -1,6 +1,7 @@
 import pyrol
 
 import goated.rol_interface.objectives as gro
+from goated.rol_interface.objectives import GotchaRolObjective, GocchaRolObjective
 from goated.rol_interface.vectors import TuckerVector, CPVector
 from goated.tucker import GotchaObjective, TuckerObjective
 from goated.cp import GocchaObjective, CPObjective
@@ -41,12 +42,23 @@ def build_cp_parameter_list():
     return params
 
 
-class GotchaRolModel:
+class GoatedRolModel:
 
-    def __init__(self, objective: Union[GotchaObjective, TuckerObjective], initial_decomp) -> None:
-        x = TuckerVector.from_tensor(initial_decomp, copy=True)
+    def __init__(self, objective: Union[TuckerObjective, CPObjective], initial_decomp) -> None:
+
+        if isinstance(objective, TuckerObjective):
+            self._rolvector_type    = TuckerVector
+            self._rolobjective_type = GotchaRolObjective
+        elif isinstance(objective, CPObjective):
+            self._rolvector_type    = CPVector
+            self._rolobjective_type = GocchaRolObjective
+        else:
+            raise ValueError()
+
+        x = self._rolvector_type.from_tensor(initial_decomp, copy=True)
         g = x.dual()
         self.objective = objective
+        self.decomp = None
         self._rol_x = x
         self._rol_g = g
         self._rol_objective = None
@@ -55,38 +67,31 @@ class GotchaRolModel:
         self._rol_solver    = None
         return
     
+    def default_rol_params(self):
+        if issubclass(self._rolvector_type, TuckerVector):
+            return build_parameter_list()
+        else:
+            return build_cp_parameter_list()
+    
     def solve(self, rol_params=None, precondition=True):
-        self._rol_objective = gro.GotchaRolObjective(precondition, self.objective)
+        self._rol_objective = self._rolobjective_type(precondition, self.objective)
+        self._rol_params    = rol_params if rol_params is not None else self.default_rol_params()
         self._rol_problem   = pyrol.Problem(self._rol_objective, self._rol_x, self._rol_g)
-        self._rol_params = rol_params if rol_params is not None else build_parameter_list()
-        self._rol_solver = pyrol.Solver(self._rol_problem, self._rol_params)
+        self._rol_solver    = pyrol.Solver(self._rol_problem, self._rol_params)
         stream = pyrol.getCout()
         self._rol_solver.solve(stream)
         self.decomp = self._rol_x.to_tensor()
         return
 
 
-class GocchaRolModel:
+class GotchaRolModel(GoatedRolModel):
+
+    def __init__(self, objective: Union[GotchaObjective, TuckerObjective], initial_decomp) -> None:
+        super().__init__(objective, initial_decomp)
+
+
+class GocchaRolModel(GoatedRolModel):
 
     def __init__(self, objective: Union[GocchaObjective, CPObjective], initial_decomp) -> None:
-        x = CPVector.from_tensor(initial_decomp, copy=True)
-        g = x.dual()
-        self.objective = objective
-        self._rol_x = x
-        self._rol_g = g
-        self._rol_objective = None
-        self._rol_problem   = None
-        self._rol_params    = None
-        self._rol_solver    = None
-        return
-
-    def solve(self, rol_params=None, precondition=True):
-        self._rol_objective = gro.GocchaRolObjective(precondition, self.objective)
-        self._rol_problem   = pyrol.Problem(self._rol_objective, self._rol_x, self._rol_g)
-        self._rol_params = rol_params if rol_params is not None else build_cp_parameter_list()
-        self._rol_solver = pyrol.Solver(self._rol_problem, self._rol_params)
-        stream = pyrol.getCout()
-        self._rol_solver.solve(stream)
-        self.decomp = self._rol_x.to_tensor()
-        return
+        super().__init__(objective, initial_decomp)
 
