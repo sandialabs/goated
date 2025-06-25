@@ -1,7 +1,7 @@
 import pyrol
 
 import goated.rol_interface.objective as gro
-import goated.rol_interface.vectorization as vu
+import goated.rol_interface.vectors as vu
 from goated.tucker import GotchaObjective, TuckerObjective
 from goated.cp import GocchaObjective, CPObjective
 from typing import Union

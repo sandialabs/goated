@@ -1,7 +1,7 @@
 import numpy as np
 
 import pyrol
-import goated.rol_interface.vectorization as uvec
+import goated.rol_interface.vectors as uvec
 
 from tqdm import tqdm
 import dask
