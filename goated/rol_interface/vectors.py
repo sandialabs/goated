@@ -11,11 +11,11 @@ logger = logging.getLogger()  # root logger
 logger.addFilter(ExtraCopyFilter())
 
 
+import pyrol
 from pyrol.pyrol import ROL
-from pyrol.getTypeName import *
 
 
-class TuckerVector(getTypeName('Vector')):
+class TuckerVector(pyrol.Vector):
 
     @staticmethod
     def from_ttensor(x, copy=False):
@@ -182,7 +182,7 @@ class TuckerVector(getTypeName('Vector')):
         return ans
 
 
-class CPVector(getTypeName('Vector')):
+class CPVector(pyrol.Vector):
 
     @staticmethod
     def from_ktensor(x, copy=False):
