@@ -76,7 +76,6 @@ class CPObjective:
         #  Compute gram matrices
         if self.recompute_prec:
             self.S = [A[k].T@A[k] for k in range(d)]
-        Sb = [Ab[k].T@A[k] for k in range(d)]
         R = A[0].shape[1]
 
         # diagonal factors
