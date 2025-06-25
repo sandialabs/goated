@@ -1,8 +1,7 @@
-# add ROL things
 import pyrol
 
 import goated.rol_interface.objective as gro
-import goated.utils.vectorization as vu
+import goated.rol_interface.vectorization as vu
 from goated.tucker import GotchaObjective, TuckerObjective
 from goated.cp import GocchaObjective, CPObjective
 from typing import Union
@@ -65,6 +64,8 @@ class GotchaRolModel:
         self._rol_solver.solve(stream)
         self.decomp = vu.rolvec_to_ttensor(self._rol_x)
         return
+
+
 
 
 class GocchaRolModel:

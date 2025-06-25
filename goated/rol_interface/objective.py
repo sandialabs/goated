@@ -1,8 +1,7 @@
 import numpy as np
 
 import pyrol
-import goated.utils.vectorization as uvec
-from goated.rol_interface.CPVector import CPVector
+import goated.rol_interface.vectorization as uvec
 
 from tqdm import tqdm
 import dask
@@ -56,7 +55,7 @@ class GotchaRolObjective(pyrol.Objective):
         def run(i):
             v = x.basis(i)
             self.hessVec(hv,v,x,0.0)
-            out = uvec.vec_to_array(hv)
+            out = uvec.trolvec_to_array(hv)
             return out
         if parallel:
             lazy_results = []
@@ -80,9 +79,9 @@ class GotchaRolObjective(pyrol.Objective):
         def run(i):
             v = x.basis(i)
             self.hessVec(hv,v,x,0.0)
-            out1 = uvec.vec_to_array(hv)
+            out1 = uvec.trolvec_to_array(hv)
             self.precond(pv,hv,x,0.0)
-            out2 = uvec.vec_to_array(pv)
+            out2 = uvec.trolvec_to_array(pv)
             return (out1, out2)
         if parallel:
             lazy_results = []
