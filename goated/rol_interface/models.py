@@ -1,6 +1,6 @@
 import pyrol
 
-import goated.rol_interface.objective as gro
+import goated.rol_interface.objectives as gro
 from goated.rol_interface.vectors import TuckerVector, CPVector
 from goated.tucker import GotchaObjective, TuckerObjective
 from goated.cp import GocchaObjective, CPObjective
