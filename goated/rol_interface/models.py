@@ -82,16 +82,3 @@ class GoatedRolModel:
         self._rol_solver.solve(stream)
         self.decomp = self._rol_x.to_tensor()
         return
-
-
-class GotchaRolModel(GoatedRolModel):
-
-    def __init__(self, objective: Union[GotchaObjective, TuckerObjective], initial_decomp) -> None:
-        super().__init__(objective, initial_decomp)
-
-
-class GocchaRolModel(GoatedRolModel):
-
-    def __init__(self, objective: Union[GocchaObjective, CPObjective], initial_decomp) -> None:
-        super().__init__(objective, initial_decomp)
-
