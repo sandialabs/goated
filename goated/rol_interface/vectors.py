@@ -17,6 +17,22 @@ from pyrol.getTypeName import *
 
 class TuckerVector(getTypeName('Vector')):
 
+    @staticmethod
+    def from_ttensor(x, copy=False):
+        if copy:
+            return TuckerVector(deepcopy(x.core.data), deepcopy(x.factor_matrices))
+        else:
+            return TuckerVector(x.core.data, x.factor_matrices)
+        
+    def to_ttensor(self, copy=False):
+        return ttb.ttensor(ttb.tensor(self.core), self.factors, copy=copy)
+    
+    def to_numpy_1d(self):
+        y = np.reshape(self.core, (-1,), order='F')
+        for f in self.factors:
+            y = np.concatenate([y, np.reshape(f, (-1,), order='F')])
+        return y
+
     def __init__(self, core, factors):
         # core is a NumPy array and factors are a list of NumPy arrays
         assert isinstance(core,np.ndarray)
@@ -168,6 +184,16 @@ class TuckerVector(getTypeName('Vector')):
 
 class CPVector(getTypeName('Vector')):
 
+    @staticmethod
+    def from_ktensor(x, copy=False):
+        if copy:
+            return CPVector(deepcopy(x.factor_matrices))
+        else:
+            return CPVector(x.factor_matrices)
+        
+    def to_ktensor(self, copy=False):
+        return ttb.ktensor(self.data, copy=copy)
+
     def __init__(self, factors):
         # factors are a list of NumPy arrays
         assert isinstance(factors,list)
@@ -298,31 +324,3 @@ class CPVector(getTypeName('Vector')):
             ans += self.data[k].size
         return ans
 
-
-def trolvec_to_array(x):
-    y = np.reshape(x.core,(-1,),order='F')
-    for f in x.factors:
-        y = np.concatenate([y,np.reshape(f,(-1,),order='F')])
-    return y
-
-
-def rolvec_to_ttensor(x, copy=False):
-    return ttb.ttensor(ttb.tensor(x.core), x.factors, copy=copy)
-
-
-def rolvec_to_ktensor(x, copy=False):
-    return ttb.ktensor(x.data, copy=copy)
-
-
-def ttensor_to_rolvec(x, copy=False):
-    if copy:
-        return TuckerVector(deepcopy(x.core.data), deepcopy(x.factor_matrices))
-    else:
-        return TuckerVector(x.core.data, x.factor_matrices)
-
-
-def ktensor_to_rolvec(x, copy=False):
-    if copy:
-        return CPVector(deepcopy(x.factor_matrices))
-    else:
-        return CPVector(x.factor_matrices)

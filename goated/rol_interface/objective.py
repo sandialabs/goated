@@ -1,13 +1,12 @@
 import numpy as np
 
 import pyrol
-import goated.rol_interface.vectors as uvec
+from goated.rol_interface.vectors import TuckerVector, CPVector
 
 from tqdm import tqdm
 import dask
 dask.config.set(scheduler='threads', num_workers=4)
 from dask.diagnostics import ProgressBar
-import pyttb as ttb
 
 
 class GotchaRolObjective(pyrol.Objective):
@@ -18,34 +17,34 @@ class GotchaRolObjective(pyrol.Objective):
         self._precondition = precondition
 
     def update(self, x, update_type, iter):
-        x = uvec.rolvec_to_ttensor(x)
+        x = x.to_ttensor()
         self._objective.update(x)
 
     def value(self, x, tol):
-        x = uvec.rolvec_to_ttensor(x)
+        x = x.to_ttensor()
         return self._objective.value(x)
 
     def gradient(self, g, x, tol):
-        x = uvec.rolvec_to_ttensor(x)
+        x = x.to_ttensor()
         temp = self._objective.gradient(x)
-        temp = uvec.ttensor_to_rolvec(temp)
+        temp = TuckerVector.from_ttensor(temp)
         g.set(temp)
 
     def hessVec(self, hv, v, x, tol):
-        x = uvec.rolvec_to_ttensor(x)
-        v = uvec.rolvec_to_ttensor(v)
+        x = x.to_ttensor()
+        v = v.to_ttensor()
         temp = self._objective.gn_hessvec(x,v)
-        temp = uvec.ttensor_to_rolvec(temp)
+        temp = TuckerVector.from_ttensor(temp)
         hv.set(temp)
 
     def precond(self, pv, v, x, tol):
         if not self._precondition:
             pv.set(v)
             return
-        x = uvec.rolvec_to_ttensor(x)
-        v = uvec.rolvec_to_ttensor(v)
+        x = x.to_ttensor()
+        v = v.to_ttensor()
         temp = self._objective.gn_bd_precvec(x,v)
-        temp = uvec.ttensor_to_rolvec(temp)
+        temp = TuckerVector.from_ttensor(temp)
         pv.set(temp)
 
     def compute_hessian(self, x, parallel=False):
@@ -55,7 +54,7 @@ class GotchaRolObjective(pyrol.Objective):
         def run(i):
             v = x.basis(i)
             self.hessVec(hv,v,x,0.0)
-            out = uvec.trolvec_to_array(hv)
+            out = hv.to_numpy_1d()
             return out
         if parallel:
             lazy_results = []
@@ -79,9 +78,9 @@ class GotchaRolObjective(pyrol.Objective):
         def run(i):
             v = x.basis(i)
             self.hessVec(hv,v,x,0.0)
-            out1 = uvec.trolvec_to_array(hv)
+            out1 = hv.to_numpy_1d()
             self.precond(pv,hv,x,0.0)
-            out2 = uvec.trolvec_to_array(pv)
+            out2 = pv.to_numpy_1d()
             return (out1, out2)
         if parallel:
             lazy_results = []
@@ -109,35 +108,35 @@ class GocchaRolObjective(pyrol.Objective):
         self._precondition = precondition
 
     def update(self, x, update_type, iter):
-        x = uvec.rolvec_to_ktensor(x)
+        x = x.to_ktensor()
         self._objective.update(x)
 
     def value(self, x, tol):
-        x = uvec.rolvec_to_ktensor(x)
+        x = x.to_ktensor()
         return self._objective.value(x)
 
     def gradient(self, g, x, tol):
-        x = ttb.ktensor(x.data)
+        x = x.to_ktensor()
         self._objective.update(x)
         temp = self._objective.gradient(x)
-        temp = uvec.ktensor_to_rolvec(temp)
+        temp = CPVector.from_ktensor(temp)
         g.set(temp)
 
     def hessVec(self, hv, v, x, tol):
-        x = ttb.ktensor(x.data)
-        v = ttb.ktensor(v.data)
+        x = x.to_ktensor()
+        v = v.to_ktensor()
         self._objective.update(x)
         temp = self._objective.hessvec(x,v)
-        temp = uvec.ktensor_to_rolvec(temp)
+        temp = CPVector.from_ktensor(temp)
         hv.set(temp)
 
     def precond(self, pv, v, x, tol):
         if not self._precondition:
             pv.set(v)
             return
-        x = ttb.ktensor(x.data)
-        v = ttb.ktensor(v.data)
+        x = x.to_ktensor()
+        v = v.to_ktensor()
         self._objective.update(x)
         temp = self._objective.precvec(x,v)
-        temp = uvec.ktensor_to_rolvec(temp)
+        temp = CPVector.from_ktensor(temp)
         pv.set(temp)

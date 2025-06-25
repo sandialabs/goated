@@ -1,7 +1,7 @@
 import pyrol
 
 import goated.rol_interface.objective as gro
-import goated.rol_interface.vectors as vu
+from goated.rol_interface.vectors import TuckerVector, CPVector
 from goated.tucker import GotchaObjective, TuckerObjective
 from goated.cp import GocchaObjective, CPObjective
 from typing import Union
@@ -44,7 +44,7 @@ def build_cp_parameter_list():
 class GotchaRolModel:
 
     def __init__(self, objective: Union[GotchaObjective, TuckerObjective], initial_decomp) -> None:
-        x = vu.ttensor_to_rolvec(initial_decomp, copy=True)
+        x = TuckerVector.from_ttensor(initial_decomp, copy=True)
         g = x.dual()
         self.objective = objective
         self._rol_x = x
@@ -62,16 +62,14 @@ class GotchaRolModel:
         self._rol_solver = pyrol.Solver(self._rol_problem, self._rol_params)
         stream = pyrol.getCout()
         self._rol_solver.solve(stream)
-        self.decomp = vu.rolvec_to_ttensor(self._rol_x)
+        self.decomp = self._rol_x.to_ttensor()
         return
-
-
 
 
 class GocchaRolModel:
 
     def __init__(self, objective: Union[GocchaObjective, CPObjective], initial_decomp) -> None:
-        x = vu.ktensor_to_rolvec(initial_decomp, copy=True)
+        x = CPVector.from_ktensor(initial_decomp, copy=True)
         g = x.dual()
         self.objective = objective
         self._rol_x = x
@@ -89,6 +87,6 @@ class GocchaRolModel:
         self._rol_solver = pyrol.Solver(self._rol_problem, self._rol_params)
         stream = pyrol.getCout()
         self._rol_solver.solve(stream)
-        self.decomp = vu.rolvec_to_ktensor(self._rol_x)
+        self.decomp = self._rol_x.to_ktensor()
         return
 
