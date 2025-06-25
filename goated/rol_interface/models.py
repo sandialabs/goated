@@ -1,7 +1,7 @@
 import pyrol
 
 import goated.rol_interface.objectives as gro
-from goated.rol_interface.objectives import GotchaRolObjective, GocchaRolObjective
+from goated.rol_interface.objectives import GoatedRolObjective
 from goated.rol_interface.vectors import TuckerVector, CPVector
 from goated.tucker import GotchaObjective, TuckerObjective
 from goated.cp import GocchaObjective, CPObjective
@@ -48,10 +48,8 @@ class GoatedRolModel:
 
         if isinstance(objective, TuckerObjective):
             self._rolvector_type    = TuckerVector
-            self._rolobjective_type = GotchaRolObjective
         elif isinstance(objective, CPObjective):
             self._rolvector_type    = CPVector
-            self._rolobjective_type = GocchaRolObjective
         else:
             raise ValueError()
 
@@ -74,8 +72,8 @@ class GoatedRolModel:
             return build_cp_parameter_list()
     
     def solve(self, rol_params=None, precondition=True):
-        self._rol_objective = self._rolobjective_type(precondition, self.objective)
         self._rol_params    = rol_params if rol_params is not None else self.default_rol_params()
+        self._rol_objective = GoatedRolObjective(precondition, self.objective, self._rolvector_type)
         self._rol_problem   = pyrol.Problem(self._rol_objective, self._rol_x, self._rol_g)
         self._rol_solver    = pyrol.Solver(self._rol_problem, self._rol_params)
         stream = pyrol.getCout()

@@ -98,17 +98,3 @@ class GoatedRolObjective(pyrol.Objective):
             H[:,i]    = u
             Hpre[:,i] = v
         return H, Hpre
-
-
-
-class GotchaRolObjective(GoatedRolObjective):
-
-    def __init__(self, precondition, objective):
-        super().__init__(precondition, objective, TuckerVector)
-
-
-
-class GocchaRolObjective(GoatedRolObjective):
-
-    def __init__(self, precondition, objective):
-        super().__init__(precondition, objective, CPVector)
