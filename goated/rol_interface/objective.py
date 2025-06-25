@@ -4,9 +4,19 @@ import pyrol
 from goated.rol_interface.vectors import TuckerVector, CPVector
 
 from tqdm import tqdm
-import dask
-dask.config.set(scheduler='threads', num_workers=4)
-from dask.diagnostics import ProgressBar
+
+
+def dask_parallel_eval(callable, iterable, num_workers=4):
+    import dask
+    dask.config.set(scheduler='threads', num_workers=num_workers)
+    from dask.diagnostics import ProgressBar
+    lazy_results = []
+    for i in iterable:
+        lazy_data = dask.delayed(callable)(i)
+        lazy_results.append(lazy_data)
+    with ProgressBar():
+        results = dask.compute(*lazy_results)
+    return results
 
 
 class GotchaRolObjective(pyrol.Objective):
@@ -57,12 +67,7 @@ class GotchaRolObjective(pyrol.Objective):
             out = hv.to_numpy_1d()
             return out
         if parallel:
-            lazy_results = []
-            for i in range(n):
-                lazy_data = dask.delayed(run)(i)
-                lazy_results.append(lazy_data)
-            with ProgressBar():
-                results = dask.compute(*lazy_results)
+            results = dask_parallel_eval(run, range(n))
         else:
             results = [run(i) for i in tqdm(range(n))]
         H = np.zeros((n,n))
@@ -83,12 +88,7 @@ class GotchaRolObjective(pyrol.Objective):
             out2 = pv.to_numpy_1d()
             return (out1, out2)
         if parallel:
-            lazy_results = []
-            for i in range(n):
-                lazy_data = dask.delayed(run)(i)
-                lazy_results.append(lazy_data)
-            with ProgressBar():
-                results = dask.compute(*lazy_results)
+            results = dask_parallel_eval(run, range(n))
         else:
             results = [run(i) for i in tqdm(range(n))]
         H = np.zeros((n,n))
@@ -97,7 +97,6 @@ class GotchaRolObjective(pyrol.Objective):
             H[:,i]    = u
             Hpre[:,i] = v
         return H, Hpre
-
 
 
 class GocchaRolObjective(pyrol.Objective):
