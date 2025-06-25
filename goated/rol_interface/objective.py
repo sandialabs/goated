@@ -19,42 +19,43 @@ def dask_parallel_eval(callable, iterable, num_workers=4):
     return results
 
 
-class GotchaRolObjective(pyrol.Objective):
+class GoatedRolObjective(pyrol.Objective):
 
-    def __init__(self, precondition, objective):
+    def __init__(self, precondition, objective, rolvector_type):
         super().__init__()
         self._objective = objective
         self._precondition = precondition
+        self._rolvector_type = rolvector_type
 
     def update(self, x, update_type, iter):
-        x = x.to_ttensor()
+        x = x.to_tensor()
         self._objective.update(x)
 
     def value(self, x, tol):
-        x = x.to_ttensor()
+        x = x.to_tensor()
         return self._objective.value(x)
 
     def gradient(self, g, x, tol):
-        x = x.to_ttensor()
+        x = x.to_tensor()
         temp = self._objective.gradient(x)
-        temp = TuckerVector.from_ttensor(temp)
+        temp = self._rolvector_type.from_tensor(temp)
         g.set(temp)
 
     def hessVec(self, hv, v, x, tol):
-        x = x.to_ttensor()
-        v = v.to_ttensor()
-        temp = self._objective.gn_hessvec(x,v)
-        temp = TuckerVector.from_ttensor(temp)
+        x = x.to_tensor()
+        v = v.to_tensor()
+        temp = self._objective.hessvec(x,v)
+        temp = self._rolvector_type.from_tensor(temp)
         hv.set(temp)
 
     def precond(self, pv, v, x, tol):
         if not self._precondition:
             pv.set(v)
             return
-        x = x.to_ttensor()
-        v = v.to_ttensor()
-        temp = self._objective.gn_bd_precvec(x,v)
-        temp = TuckerVector.from_ttensor(temp)
+        x = x.to_tensor()
+        v = v.to_tensor()
+        temp = self._objective.precvec(x,v)
+        temp = self._rolvector_type.from_tensor(temp)
         pv.set(temp)
 
     def compute_hessian(self, x, parallel=False):
@@ -99,43 +100,15 @@ class GotchaRolObjective(pyrol.Objective):
         return H, Hpre
 
 
-class GocchaRolObjective(pyrol.Objective):
+
+class GotchaRolObjective(GoatedRolObjective):
 
     def __init__(self, precondition, objective):
-        super().__init__()
-        self._objective = objective
-        self._precondition = precondition
+        super().__init__(precondition, objective, TuckerVector)
 
-    def update(self, x, update_type, iter):
-        x = x.to_ktensor()
-        self._objective.update(x)
 
-    def value(self, x, tol):
-        x = x.to_ktensor()
-        return self._objective.value(x)
 
-    def gradient(self, g, x, tol):
-        x = x.to_ktensor()
-        self._objective.update(x)
-        temp = self._objective.gradient(x)
-        temp = CPVector.from_ktensor(temp)
-        g.set(temp)
+class GocchaRolObjective(GoatedRolObjective):
 
-    def hessVec(self, hv, v, x, tol):
-        x = x.to_ktensor()
-        v = v.to_ktensor()
-        self._objective.update(x)
-        temp = self._objective.hessvec(x,v)
-        temp = CPVector.from_ktensor(temp)
-        hv.set(temp)
-
-    def precond(self, pv, v, x, tol):
-        if not self._precondition:
-            pv.set(v)
-            return
-        x = x.to_ktensor()
-        v = v.to_ktensor()
-        self._objective.update(x)
-        temp = self._objective.precvec(x,v)
-        temp = CPVector.from_ktensor(temp)
-        pv.set(temp)
+    def __init__(self, precondition, objective):
+        super().__init__(precondition, objective, CPVector)

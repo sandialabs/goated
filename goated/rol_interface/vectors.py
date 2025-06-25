@@ -18,13 +18,13 @@ from pyrol.pyrol import ROL
 class TuckerVector(pyrol.Vector):
 
     @staticmethod
-    def from_ttensor(x, copy=False):
+    def from_tensor(x, copy=False):
         if copy:
             return TuckerVector(deepcopy(x.core.data), deepcopy(x.factor_matrices))
         else:
             return TuckerVector(x.core.data, x.factor_matrices)
         
-    def to_ttensor(self, copy=False):
+    def to_tensor(self, copy=False):
         return ttb.ttensor(ttb.tensor(self.core), self.factors, copy=copy)
     
     def to_numpy_1d(self):
@@ -185,13 +185,13 @@ class TuckerVector(pyrol.Vector):
 class CPVector(pyrol.Vector):
 
     @staticmethod
-    def from_ktensor(x, copy=False):
+    def from_tensor(x, copy=False):
         if copy:
             return CPVector(deepcopy(x.factor_matrices))
         else:
             return CPVector(x.factor_matrices)
         
-    def to_ktensor(self, copy=False):
+    def to_tensor(self, copy=False):
         return ttb.ktensor(self.data, copy=copy)
 
     def __init__(self, factors):

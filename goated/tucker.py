@@ -54,7 +54,7 @@ class TuckerObjective:
         self.times['gradient'].append(toc - tic)
         return G
     
-    def gn_hessvec(self, M, V):
+    def hessvec(self, M, V):
         tic = _time.time()
         # Form tangent of reconstructed tensor
         Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
@@ -96,7 +96,7 @@ class TuckerObjective:
         self.times['recompute_bd_prec'].append(toc - tic)
         return
 
-    def gn_bd_precvec(self, M, V):
+    def precvec(self, M, V):
         if self.recompute_prec:
             self.recompute_bd_prec(M)
         
@@ -170,7 +170,7 @@ class GotchaObjective(TuckerObjective):
         self.times['gradient'].append(toc - tic)
         return G
     
-    def gn_hessvec(self, M, V):
+    def hessvec(self, M, V):
         tic = _time.time()
         # Form tangent of reconstructed tensor
         Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)

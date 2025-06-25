@@ -44,7 +44,7 @@ def build_cp_parameter_list():
 class GotchaRolModel:
 
     def __init__(self, objective: Union[GotchaObjective, TuckerObjective], initial_decomp) -> None:
-        x = TuckerVector.from_ttensor(initial_decomp, copy=True)
+        x = TuckerVector.from_tensor(initial_decomp, copy=True)
         g = x.dual()
         self.objective = objective
         self._rol_x = x
@@ -62,14 +62,14 @@ class GotchaRolModel:
         self._rol_solver = pyrol.Solver(self._rol_problem, self._rol_params)
         stream = pyrol.getCout()
         self._rol_solver.solve(stream)
-        self.decomp = self._rol_x.to_ttensor()
+        self.decomp = self._rol_x.to_tensor()
         return
 
 
 class GocchaRolModel:
 
     def __init__(self, objective: Union[GocchaObjective, CPObjective], initial_decomp) -> None:
-        x = CPVector.from_ktensor(initial_decomp, copy=True)
+        x = CPVector.from_tensor(initial_decomp, copy=True)
         g = x.dual()
         self.objective = objective
         self._rol_x = x
@@ -87,6 +87,6 @@ class GocchaRolModel:
         self._rol_solver = pyrol.Solver(self._rol_problem, self._rol_params)
         stream = pyrol.getCout()
         self._rol_solver.solve(stream)
-        self.decomp = self._rol_x.to_ktensor()
+        self.decomp = self._rol_x.to_tensor()
         return
 
