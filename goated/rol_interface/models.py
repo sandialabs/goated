@@ -1,10 +1,9 @@
 import pyrol
 
-import goated.rol_interface.objectives as gro
 from goated.rol_interface.objectives import GoatedRolObjective
 from goated.rol_interface.vectors import TuckerVector, CPVector
-from goated.tucker import GotchaObjective, TuckerObjective
-from goated.cp import GocchaObjective, CPObjective
+from goated.tucker import TuckerObjective
+from goated.cp import CPObjective
 from typing import Union
 
 
@@ -47,9 +46,9 @@ class GoatedRolModel:
     def __init__(self, objective: Union[TuckerObjective, CPObjective], initial_decomp) -> None:
 
         if isinstance(objective, TuckerObjective):
-            self._rolvector_type    = TuckerVector
+            self._rolvector_type = TuckerVector
         elif isinstance(objective, CPObjective):
-            self._rolvector_type    = CPVector
+            self._rolvector_type = CPVector
         else:
             raise ValueError()
 
