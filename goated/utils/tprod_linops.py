@@ -148,7 +148,78 @@ class InvPosDef(RealLinOp):
         temp = self.__matmul__(other.T)
         out = temp.T
         return out
+
+
+class DyadicKronStructured(RealLinOp):
+
+    def __init__(self, A : RealLinOp_like, B : RealLinOp_like, adjoint=None):
+        assert A.ndim == 2
+        assert B.ndim == 2
+        self.A = A
+        self.B = B
+        self._A_is_trivial = A.size == 1
+        self._B_is_trivial = B.size == 1
+        self._shape = ( A.shape[0]*B.shape[0], A.shape[1]*B.shape[1] )
+        self._size = self.shape[0] * self.shape[1]
+        self._fwd_matvec_core_shape = (B.shape[1], A.shape[1])
+        self._adj_matvec_core_shape = (B.shape[0], A.shape[0])
+        self._dtype = A.dtype
+        self._linop =  sparla.LinearOperator(
+            dtype=self.dtype, shape=self.shape,
+            matvec=self._matvec,   # type: ignore
+            rmatvec=self._rmatvec  # type: ignore
+        )
+        self._adjoint = DyadicKronStructured(A.T, B.T, adjoint=self) if adjoint is None else adjoint
+
+    def item(self):
+        # This will raise a ValueError if self.size > 1.
+        return self.A.item() * self.B.item()
     
+    def _matvec(self, other: np.ndarray) -> np.ndarray:
+        assert other.size == self.shape[1]
+        if self._A_is_trivial:
+            return self.A.item() * (self.B @ other)
+        if self._B_is_trivial:
+            return self.B.item() * (self.A @ other)
+        inshape = other.shape
+        out = self.B @ np.reshape(other, self._fwd_matvec_core_shape, order='F') @ self.A.T
+        out = np.reshape(out, inshape, order='F')
+        return out
+
+    def _rmatvec(self, other: np.ndarray) -> np.ndarray:
+        assert other.size == self.shape[0]
+        if self._A_is_trivial:
+            return self.A.item() * (self.B.T @ other)
+        if self._B_is_trivial:
+            return self.B.item() * (self.A.T @ other)
+        inshape = other.shape
+        out = self.B.T @ np.reshape(other, self._adj_matvec_core_shape, order='F') @ self.A
+        out = np.reshape(out, inshape, order='F')
+        return out
+    
+    @staticmethod
+    def recursive_dyadic(kron_operands: Sequence[RealLinOp_like]) -> "DyadicKronStructured":
+        assert len(kron_operands) > 1
+        if len(kron_operands) == 2:
+            out = DyadicKronStructured(kron_operands[0], kron_operands[1])
+            return out
+        arg = DyadicKronStructured.recursive_dyadic(kron_operands[1:])
+        out = DyadicKronStructured(kron_operands[0], arg)
+        return out
+
+
+class KronStructured(RealLinOp):
+
+    def __init__(self, kron_operands : Sequence[RealLinOp_like]):
+        assert len(kron_operands) > 1
+        self.kron_operands = kron_operands
+        self.shapes = np.array([op.shape for op in kron_operands])
+        self._shape = tuple(int(i) for i in np.prod(self.shapes, axis=0))
+        forward = DyadicKronStructured.recursive_dyadic(self.kron_operands)
+        self._linop   = forward._linop
+        self._adjoint = forward.T
+        self._dtype   = forward.dtype
+
 
 class InvUpdatedKronPosDef(RealLinOp):
     """
@@ -242,74 +313,3 @@ class InvUpdatedKronPosDef(RealLinOp):
         temp = self @ other.T
         out = temp.T
         return out
-
-
-class DyadicKronStructured(RealLinOp):
-
-    def __init__(self, A : RealLinOp_like, B : RealLinOp_like, adjoint=None):
-        assert A.ndim == 2
-        assert B.ndim == 2
-        self.A = A
-        self.B = B
-        self._A_is_trivial = A.size == 1
-        self._B_is_trivial = B.size == 1
-        self._shape = ( A.shape[0]*B.shape[0], A.shape[1]*B.shape[1] )
-        self._size = self.shape[0] * self.shape[1]
-        self._fwd_matvec_core_shape = (B.shape[1], A.shape[1])
-        self._adj_matvec_core_shape = (B.shape[0], A.shape[0])
-        self._dtype = A.dtype
-        self._linop =  sparla.LinearOperator(
-            dtype=self.dtype, shape=self.shape,
-            matvec=self._matvec,   # type: ignore
-            rmatvec=self._rmatvec  # type: ignore
-        )
-        self._adjoint = DyadicKronStructured(A.T, B.T, adjoint=self) if adjoint is None else adjoint
-
-    def item(self):
-        # This will raise a ValueError if self.size > 1.
-        return self.A.item() * self.B.item()
-    
-    def _matvec(self, other: np.ndarray) -> np.ndarray:
-        assert other.size == self.shape[1]
-        if self._A_is_trivial:
-            return self.A.item() * (self.B @ other)
-        if self._B_is_trivial:
-            return self.B.item() * (self.A @ other)
-        inshape = other.shape
-        out = self.B @ np.reshape(other, self._fwd_matvec_core_shape, order='F') @ self.A.T
-        out = np.reshape(out, inshape, order='F')
-        return out
-
-    def _rmatvec(self, other: np.ndarray) -> np.ndarray:
-        assert other.size == self.shape[0]
-        if self._A_is_trivial:
-            return self.A.item() * (self.B.T @ other)
-        if self._B_is_trivial:
-            return self.B.item() * (self.A.T @ other)
-        inshape = other.shape
-        out = self.B.T @ np.reshape(other, self._adj_matvec_core_shape, order='F') @ self.A
-        out = np.reshape(out, inshape, order='F')
-        return out
-    
-    @staticmethod
-    def recursive_dyadic(kron_operands: Sequence[RealLinOp_like]) -> "DyadicKronStructured":
-        assert len(kron_operands) > 1
-        if len(kron_operands) == 2:
-            out = DyadicKronStructured(kron_operands[0], kron_operands[1])
-            return out
-        arg = DyadicKronStructured.recursive_dyadic(kron_operands[1:])
-        out = DyadicKronStructured(kron_operands[0], arg)
-        return out
-
-
-class KronStructured(RealLinOp):
-
-    def __init__(self, kron_operands : Sequence[RealLinOp_like]):
-        assert len(kron_operands) > 1
-        self.kron_operands = kron_operands
-        self.shapes = np.array([op.shape for op in kron_operands])
-        self._shape = tuple(int(i) for i in np.prod(self.shapes, axis=0))
-        forward = DyadicKronStructured.recursive_dyadic(self.kron_operands)
-        self._linop   = forward._linop
-        self._adjoint = forward.T
-        self._dtype   = forward.dtype
