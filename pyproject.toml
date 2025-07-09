@@ -14,7 +14,7 @@ dependencies = [
     "pyttb",
     "pyrol"
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.optional-dependencies]
 genten = ["pygenten"]
