@@ -90,7 +90,7 @@ class TuckerObjective:
             self.C.append(block)
         grams[0] *= (2/self.s)
         kron_args = [linops.InvPosDef(gram) for gram in grams[::-1]]
-        B = linops.KronStructured(kron_args)
+        B = linops.KronStructured.recursive_dyadic(kron_args)
         self.C.append(B)
         toc = _time.time()
         self.times['recompute_bd_prec'].append(toc - tic)

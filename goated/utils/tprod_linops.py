@@ -58,6 +58,7 @@ class RealLinOp:
         If the current linear operator is self-adjoint, then we can
         literally just return `self`. Otherwise, we have to return
         another RealLinOp object that's suitably related to this object.
+
         Our default implementation assumes the RealLinOp representation
         of the adjoint is stored persistently in a private variable
         called _adjoint.
@@ -73,20 +74,13 @@ class RealLinOp:
         """
         raise NotImplementedError()
 
-    # The default implementations of __matmul__ and __rmatmul__ rely on
-    # a private _linop member that overloads the matmul infix operator.
-    #
-    # It can be useful to have such a member if we only want to implement the
-    # action of the linear operator (and its adjoint) on 1d ndarrays, as opposed
-    # to implementing for ndarrays that could be 1d or 2d. In those situations
-    # we can have _linop be a SciPy LinearOperator whose matvec and rmatvec
-    # functions are instance methods defined in the ReaLinOp subclass at hand.
-
     def __matmul__(self, other : np.ndarray) -> np.ndarray:
-        return self._linop @ other # type: ignore
+        """ Return self @ other """
+        raise NotImplementedError()
     
     def __rmatmul__(self, other: np.ndarray) -> np.ndarray:
-        return other @ self._linop # type: ignore
+        """ Return other @ self """
+        raise NotImplementedError()
 
 
 def is_2d_square(arg) -> bool:
@@ -101,6 +95,12 @@ RealLinOp_like = Union[RealLinOp, np.ndarray]
 
 
 class InvTriangular(RealLinOp):
+    """
+    Represents inv(A), where A is a real triangular matrix given by a numpy ndarray.
+
+    The action of this linear operator is implemented with the solve_triangular
+    function in SciPy.linalg.
+    """
 
     def __init__(self, A : np.ndarray, lower: bool, adjoint=None):
         assert is_2d_square(A)
@@ -123,15 +123,21 @@ class InvTriangular(RealLinOp):
 
 
 class InvPosDef(RealLinOp):
+    """
+    Represents inv(P), where P is a real positive definite matrix given by a numpy ndarray.
 
-    def __init__(self, A: np.ndarray):
-        assert is_2d_square(A)
-        assert np.isrealobj(A)
-        self.A = A
-        self._size  = A.size
-        self._shape = A.shape
-        self._dtype = A.dtype
-        self._chol = la.cho_factor(self.A)
+    A Cholesky decomposition of P is computed at construction time. The action of inv(P) is
+    computed by the cho_solve function in SciPy.linalg.
+    """
+
+    def __init__(self, P: np.ndarray):
+        assert is_2d_square(P)
+        assert np.isrealobj(P)
+        self.P = P
+        self._size  = P.size
+        self._shape = P.shape
+        self._dtype = P.dtype
+        self._chol = la.cho_factor(self.P)
 
     @property
     def T(self) -> Self:
@@ -139,7 +145,7 @@ class InvPosDef(RealLinOp):
         return self
 
     def item(self):
-        return 1 / self.A.item()
+        return 1 / self.P.item()
     
     def __matmul__(self,  other : np.ndarray) -> np.ndarray:
         return la.cho_solve(self._chol, other, check_finite=False)
@@ -150,7 +156,16 @@ class InvPosDef(RealLinOp):
         return out
 
 
-class DyadicKronStructured(RealLinOp):
+class KronStructured(RealLinOp):
+    """
+    Represents the Kronecker product C = A ⨂ B of two real linear operators, (A, B),
+    which can be either RealLinOps or (real) numpy ndarrays. A Kronecker product of
+    n > 2 linear operators can be constructed with `KronStructured.recursive_dyadic`.
+
+    This operator's action on vectors is implemented using a standard trick that
+    avoids forming C explicitly. That action is extended to matrices with the help
+    of the LinearOperator class from SciPy.sparse.
+    """
 
     def __init__(self, A : RealLinOp_like, B : RealLinOp_like, adjoint=None):
         assert A.ndim == 2
@@ -169,7 +184,7 @@ class DyadicKronStructured(RealLinOp):
             matvec=self._matvec,   # type: ignore
             rmatvec=self._rmatvec  # type: ignore
         )
-        self._adjoint = DyadicKronStructured(A.T, B.T, adjoint=self) if adjoint is None else adjoint
+        self._adjoint = KronStructured(A.T, B.T, adjoint=self) if adjoint is None else adjoint
 
     def item(self):
         # This will raise a ValueError if self.size > 1.
@@ -196,29 +211,24 @@ class DyadicKronStructured(RealLinOp):
         out = self.B.T @ np.reshape(other, self._adj_matvec_core_shape, order='F') @ self.A
         out = np.reshape(out, inshape, order='F')
         return out
+
+    def __matmul__(self, other : np.ndarray) -> np.ndarray:
+        """ Return self @ other """
+        return self._linop @ other # type: ignore
     
+    def __rmatmul__(self, other: np.ndarray) -> np.ndarray:
+        """ Return other @ self """
+        return other @ self._linop  # type: ignore
+
     @staticmethod
-    def recursive_dyadic(kron_operands: Sequence[RealLinOp_like]) -> "DyadicKronStructured":
+    def recursive_dyadic(kron_operands: Sequence[RealLinOp_like]) -> "KronStructured":
         assert len(kron_operands) > 1
         if len(kron_operands) == 2:
-            out = DyadicKronStructured(kron_operands[0], kron_operands[1])
+            out = KronStructured(kron_operands[0], kron_operands[1])
             return out
-        arg = DyadicKronStructured.recursive_dyadic(kron_operands[1:])
-        out = DyadicKronStructured(kron_operands[0], arg)
+        arg = KronStructured.recursive_dyadic(kron_operands[1:])
+        out = KronStructured(kron_operands[0], arg)
         return out
-
-
-class KronStructured(RealLinOp):
-
-    def __init__(self, kron_operands : Sequence[RealLinOp_like]):
-        assert len(kron_operands) > 1
-        self.kron_operands = kron_operands
-        self.shapes = np.array([op.shape for op in kron_operands])
-        self._shape = tuple(int(i) for i in np.prod(self.shapes, axis=0))
-        forward = DyadicKronStructured.recursive_dyadic(self.kron_operands)
-        self._linop   = forward._linop
-        self._adjoint = forward.T
-        self._dtype   = forward.dtype
 
 
 class InvUpdatedKronPosDef(RealLinOp):
@@ -248,24 +258,6 @@ class InvUpdatedKronPosDef(RealLinOp):
     inv(L') were used.
     """
 
-    def verify(self) -> None:
-        """
-        If P = LL' + U U', then this operator is supposed to represent M = inv(P).
-        This function checks if self @ P is nearly the identity matrix.
-        """
-        explicit_K = np.eye(1)
-        for kf in self.kron_factors:
-            explicit_K = np.kron(explicit_K, kf)
-        assert isinstance(self.U, np.ndarray)
-        explicit_P = explicit_K + self.U @ self.U.T
-        expect_I = self @ explicit_P
-        nrmP = la.norm(explicit_P)
-        I = np.eye(self.shape[0])
-        rel_tol = np.finfo(self.dtype).eps * nrmP
-        abs_tol = np.finfo(self.dtype).eps ** 0.5
-        tol = max(rel_tol, abs_tol)
-        assert la.norm(I - expect_I) <= tol
-
     def __init__(self, kron_factors : List[np.ndarray], U: np.ndarray, verify=False):
         K_cho_factors = []
         dim = 1
@@ -277,7 +269,7 @@ class InvUpdatedKronPosDef(RealLinOp):
         assert dim == U.shape[0]
         self.K_cho_factors = K_cho_factors
         invL_kron_factors = [InvTriangular(lf, lower=True) for lf in K_cho_factors]
-        self.invL = KronStructured(invL_kron_factors)
+        self.invL = KronStructured.recursive_dyadic(invL_kron_factors)
         
         dim_update = U.shape[1]
         self.V = self.invL @ U
@@ -295,6 +287,24 @@ class InvUpdatedKronPosDef(RealLinOp):
             self.kron_factors = []
         self.verified = verify
         pass
+
+    def verify(self) -> None:
+        """
+        If P = K + U U', then this operator is supposed to represent inv(P).
+        This function checks if self @ P is nearly the identity matrix.
+        """
+        explicit_K = np.eye(1)
+        for kf in self.kron_factors:
+            explicit_K = np.kron(explicit_K, kf)
+        assert isinstance(self.U, np.ndarray)
+        explicit_P = explicit_K + self.U @ self.U.T
+        expect_I = self @ explicit_P
+        nrmP = la.norm(explicit_P)
+        I = np.eye(self.shape[0])
+        rel_tol = np.finfo(self.dtype).eps * nrmP
+        abs_tol = np.finfo(self.dtype).eps ** 0.5
+        tol = max(rel_tol, abs_tol)
+        assert la.norm(I - expect_I) <= tol
 
     @property
     def T(self) -> Self:
