@@ -65,12 +65,13 @@ class RealLinOp:
         """
         return self._adjoint # type: ignore
 
-    def item(self):
+    def item(self) -> np.floating:
         """
         If self.size == 1, we return a scalar representation of this linear operator.
         Otherwise, we raise an error.
 
-        No default implementation is provided.
+        For type annotation purposes we say that .item() returns anything matching
+        numpy.floating, but it will actually return a scalar of type self.dtype.
         """
         raise NotImplementedError()
 
@@ -80,6 +81,10 @@ class RealLinOp:
     
     def __rmatmul__(self, other: np.ndarray) -> np.ndarray:
         """ Return other @ self """
+        raise NotImplementedError()
+
+    def to_array(self) -> np.ndarray:
+        """Return an explicit representation of this operator as a real ndarray."""
         raise NotImplementedError()
 
 
@@ -112,14 +117,17 @@ class InvTriangular(RealLinOp):
         self._dtype = A.dtype
         self._adjoint = InvTriangular(A.T, not self.lower, self) if adjoint is None else adjoint
 
-    def item(self):
-        return 1 / self.A.item()
+    def item(self) -> np.floating:
+        return 1 / self.A.item() # type: ignore
 
     def __matmul__(self,  other : np.ndarray) -> np.ndarray:
         return la.solve_triangular(self.A, other, trans=0, lower=self.lower, check_finite=False)
     
     def __rmatmul__(self, other : np.ndarray) -> np.ndarray:
         return la.solve_triangular(self.A, other.T, trans=1, lower=self.lower, check_finite=False).T
+
+    def to_array(self) -> np.ndarray:
+        return la.inv(self.A)
 
 
 class InvPosDef(RealLinOp):
@@ -144,8 +152,8 @@ class InvPosDef(RealLinOp):
         # override the default implementation, since we're self-adjoint.
         return self
 
-    def item(self):
-        return 1 / self.P.item()
+    def item(self) -> np.floating:
+        return 1 / self.P.item() # type: ignore
     
     def __matmul__(self,  other : np.ndarray) -> np.ndarray:
         return la.cho_solve(self._chol, other, check_finite=False)
@@ -154,6 +162,9 @@ class InvPosDef(RealLinOp):
         temp = self.__matmul__(other.T)
         out = temp.T
         return out
+
+    def to_array(self) -> np.ndarray:
+        return la.inv(self.P)
 
 
 class KronStructured(RealLinOp):
@@ -186,30 +197,31 @@ class KronStructured(RealLinOp):
         )
         self._adjoint = KronStructured(A.T, B.T, adjoint=self) if adjoint is None else adjoint
 
-    def item(self):
-        # This will raise a ValueError if self.size > 1.
-        return self.A.item() * self.B.item()
+    def item(self) -> np.floating:
+        return self.A.item() * self.B.item() # type: ignore
     
     def _matvec(self, other: np.ndarray) -> np.ndarray:
         assert other.size == self.shape[1]
         if self._A_is_trivial:
-            return self.A.item() * (self.B @ other)
+            return self.A.item() * (self.B @ other) # type: ignore
         if self._B_is_trivial:
-            return self.B.item() * (self.A @ other)
+            return self.B.item() * (self.A @ other) # type: ignore
         inshape = other.shape
         out = self.B @ np.reshape(other, self._fwd_matvec_core_shape, order='F') @ self.A.T
-        out = np.reshape(out, inshape, order='F')
+        outshape = (-1, 1) if len(inshape) == 2 else (-1,)
+        out = np.reshape(out, outshape, order='F')
         return out
 
     def _rmatvec(self, other: np.ndarray) -> np.ndarray:
         assert other.size == self.shape[0]
         if self._A_is_trivial:
-            return self.A.item() * (self.B.T @ other)
+            return self.A.item() * (self.B.T @ other) # type: ignore
         if self._B_is_trivial:
-            return self.B.item() * (self.A.T @ other)
+            return self.B.item() * (self.A.T @ other) # type: ignore
         inshape = other.shape
         out = self.B.T @ np.reshape(other, self._adj_matvec_core_shape, order='F') @ self.A
-        out = np.reshape(out, inshape, order='F')
+        outshape = (-1, 1) if len(inshape) == 2 else (-1,)
+        out = np.reshape(out, outshape, order='F')
         return out
 
     def __matmul__(self, other : np.ndarray) -> np.ndarray:
@@ -219,6 +231,12 @@ class KronStructured(RealLinOp):
     def __rmatmul__(self, other: np.ndarray) -> np.ndarray:
         """ Return other @ self """
         return other @ self._linop  # type: ignore
+
+    def to_array(self) -> np.ndarray:
+        A_arr = self.A if isinstance(self.A, np.ndarray) else self.A.to_array()
+        B_arr = self.B if isinstance(self.B, np.ndarray) else self.B.to_array()
+        C = np.kron(A_arr, B_arr)
+        return C
 
     @staticmethod
     def recursive_dyadic(kron_operands: Sequence[RealLinOp_like]) -> "KronStructured":
@@ -258,7 +276,7 @@ class InvUpdatedKronPosDef(RealLinOp):
     inv(L') were used.
     """
 
-    def __init__(self, kron_factors : List[np.ndarray], U: np.ndarray, verify=False):
+    def __init__(self, kron_factors : List[np.ndarray], U: np.ndarray, enable_to_array=True):
         K_cho_factors = []
         dim = 1
         for kf in kron_factors:
@@ -275,36 +293,33 @@ class InvUpdatedKronPosDef(RealLinOp):
         self.V = self.invL @ U
         self.W = np.eye(dim_update) + self.V.T @ self.V
         self.chol_W = la.cho_factor(self.W)
+        if enable_to_array:
+            self._kron_factors = kron_factors
+            self._U = U
+        else:
+            self._kron_factors = None
+            self._U = None
         self._size  = dim * dim
         self._shape = (dim, dim)
         self._dtype = self.invL.dtype
-        if verify:
-            self.kron_factors = kron_factors
-            self.U = U
-            self.verify()
-        else:
-            self.U = None
-            self.kron_factors = []
-        self.verified = verify
-        pass
+        return
 
-    def verify(self) -> None:
-        """
-        If P = K + U U', then this operator is supposed to represent inv(P).
-        This function checks if self @ P is nearly the identity matrix.
-        """
-        explicit_K = np.eye(1)
-        for kf in self.kron_factors:
-            explicit_K = np.kron(explicit_K, kf)
-        assert isinstance(self.U, np.ndarray)
-        explicit_P = explicit_K + self.U @ self.U.T
-        expect_I = self @ explicit_P
-        nrmP = la.norm(explicit_P)
-        I = np.eye(self.shape[0])
-        rel_tol = np.finfo(self.dtype).eps * nrmP
-        abs_tol = np.finfo(self.dtype).eps ** 0.5
-        tol = max(rel_tol, abs_tol)
-        assert la.norm(I - expect_I) <= tol
+    def to_array(self) -> np.ndarray:
+        if self._U is None or self._kron_factors is None:
+            msg = """
+            The to_array method is not enabled for this InvUpdatedKronPosDef object.
+
+            This method can only be enabled at construction time, by passing
+            enable_to_array=True to the constructor.
+            """
+            raise ValueError(msg)
+        assert self._U is not None
+        assert self._kron_factors is not None
+        K = np.eye(1)
+        for kf in self._kron_factors:
+            K = np.kron(K, kf)
+        P = K + self._U @ self._U.T
+        return la.inv(P)
 
     @property
     def T(self) -> Self:

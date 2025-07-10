@@ -1,7 +1,7 @@
 import pyttb as ttb
 import numpy as np
 
-import goated.utils.tprod_linops as linops
+import goated.utils.linops as linops
 from collections import defaultdict
 import time as _time
 
