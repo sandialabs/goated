@@ -27,9 +27,7 @@ class StdScaler(Scaler):
         self.mode = mode
 
         # list of modes not including mode
-        axis = list(range(X.ndims)) 
-        axis.pop(self.mode)
-        axis = tuple(axis)
+        axis = tuple([i for i in range(X.ndims) if i != mode])
     
         # commpute mean and standard deviation
         self.mu = np.mean(X.data, axis=axis)

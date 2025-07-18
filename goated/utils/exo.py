@@ -1,11 +1,10 @@
+import numpy as np
+import math
 
 class ExoInfo:
-
-    #def __init__(self):
         
     def read_sheet(self, file_name, z_slice=0.0):
         import netCDF4 as nc
-        import numpy as np
         
         # Read file
         d = nc.Dataset(file_name,'r')
@@ -71,8 +70,6 @@ class ExoInfo:
         self.setupIntegrationInfo()
 
     def setupIntegrationInfo(self):
-        import numpy as np
-        import math
 
         num_x = len(self.x)
         num_y = len(self.y)
@@ -121,8 +118,7 @@ class ExoInfo:
         unique_nodes,self.ind = np.unique(self.linear_elem_ind, return_inverse=True)
 
     def compute_det_jac(self, x, y, z, gp):
-        import numpy as np
-
+        
         omx = 0.5*(1-gp[0])
         opx = 0.5*(1+gp[0])
         ome = 0.5*(1-gp[1])
@@ -134,8 +130,6 @@ class ExoInfo:
     
     def compute_spatial_integral(self, X, var, time, func=None, deriv=None, compute_func=True, compute_deriv=False):
         import pyttb as ttb
-        import numpy as np
-        import math
 
         if isinstance(X,ttb.ktensor):
             Xf = X.full(X).double()
@@ -189,8 +183,7 @@ class ExoInfo:
         
     def write_sheet(self, X, vars, fname, template_fname):
         import netCDF4 as nc
-        import numpy as np
-
+        
         with nc.Dataset(template_fname,'r') as src, nc.Dataset(fname, 'w') as dst:
             # copy global attributes all at once via dictionary
             dst.setncatts(src.__dict__)

@@ -37,7 +37,7 @@ def build_cp_parameter_list():
     params['Step']['Trust Region'] = pyrol.ParameterList()
     params['Step']['Trust Region']['Subproblem Solver'] = 'Truncated CG'
     params['Status Test'] = pyrol.ParameterList()
-    params['Status Test']['Iteration Limit'] = 10
+    params['Status Test']['Iteration Limit'] = 9
     return params
 
 

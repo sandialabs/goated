@@ -3,6 +3,7 @@ import numpy as np
 
 import goated.utils.linops as linops
 from collections import defaultdict
+from typing import Tuple, List, Optional
 import time as _time
 
 
@@ -10,61 +11,62 @@ class TuckerObjective:
 
     def __init__(self, X, s=None):
         self.X = X
-        self.s = s
-        if self.s is None:
-            self.s = self.X.norm()**2
+        self.s = s if s is not None else  self.X.norm()**2
+        self._shape : Tuple[int,...] = X.shape
+        self._ndims : int = len(self._shape)
+        self.Z : List[ttb.tensor] = []
         self.times = defaultdict(list)
 
     def full(self, M):
         # Same as M.full(), except saves the intermediate tensors
         ZZ = M.core.ttm(M.factor_matrices[0],0)
         self.Z = [ ZZ ]
-        for i in range(1,M.ndims):
+        for i in range(1,self._ndims):
             ZZ = ZZ.ttm(M.factor_matrices[i],i)
             self.Z.append(ZZ)
         return ZZ
-        
+
     def update(self, M):
         self.Mf = self.full(M)
 
         # compute intermediate tenmats used in gradient() and hessvec
         self.Zt = [ M.core.to_tenmat(np.array([0])).data.T ]
-        for i in range(1,M.ndims):
+        for i in range(1,self._ndims):
             self.Zt.append(self.Z[i-1].to_tenmat(np.array([i])).data.T)
 
         # whether we need to recompute point data in hessian/preconditioner
         self.recompute_hess = True
         self.recompute_prec = True
-        
-    def value(self, M):
+
+    def value(self):
         Y = self.Mf-self.X
         F = (Y.norm()**2)/self.s
         return F
-    
+
     def gradient(self, M):
         tic = _time.time()
         Y = (2/self.s)*(self.Mf-self.X)
-        Gf = [None]*M.ndims
+        Gf = [None]*self._ndims
         Zb = Y
-        for i in range(M.ndims-1,-1,-1):
+        for i in range(self._ndims-1,-1,-1):
             Gf[i] = Zb.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zb = Zb.ttm(M.factor_matrices[i].T,i)
         G = ttb.ttensor(Zb,Gf)
         toc = _time.time()
         self.times['gradient'].append(toc - tic)
         return G
-    
+
     def hessvec(self, M, V):
         tic = _time.time()
         # Form tangent of reconstructed tensor
         Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
-        for i in range(1, M.ndims):
+        for i in range(1, self._ndims):
             Zd = self.Z[i-1].ttm(V.factor_matrices[i],i) + Zd.ttm(M.factor_matrices[i],i)
 
         # compute Gauss-Newton Hessian-vector product
         Zbd = (2/self.s)*Zd
-        Hv = [None]*M.ndims
-        for i in range(M.ndims-1,-1,-1):
+        Hv = [None]*self._ndims
+        for i in range(self._ndims-1,-1,-1):
             Hv[i]= Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zbd = Zbd.ttm(M.factor_matrices[i].T,i)
         Hv = ttb.ttensor(Zbd, Hv)
@@ -73,10 +75,10 @@ class TuckerObjective:
         toc = _time.time()
         self.times['gn_hessvec'].append(toc - tic)
         return Hv
-    
+
     def recompute_bd_prec(self, M):
         tic = _time.time()
-        n = M.ndims
+        n = self._ndims
         grams = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(n)]
         self.C = []
         for k in range(n):
@@ -102,7 +104,7 @@ class TuckerObjective:
         
         tic = _time.time()
         Pv = []
-        for k in range(M.ndims):
+        for k in range(self._ndims):
             Ck = self.C[k]
             Vk = V.factor_matrices[k]
             try:
@@ -122,6 +124,15 @@ class TuckerObjective:
         return Pv
 
 
+class TuckerGoals:
+
+    def __init__(self, scaler, goals, weights):
+        self.scaler = scaler
+        self.goals = goals
+        self.weights = weights
+        
+
+
 class GotchaObjective(TuckerObjective):
 
     def __init__(self, X, scaler, goals, weights, a, b, jacobi=True):
@@ -138,9 +149,9 @@ class GotchaObjective(TuckerObjective):
         super().update(M)
         self.Mfs = self.scaler.unscale_tensor(self.Mf)
         
-    def value(self, M):
+    def value(self):
         # Tensor term
-        F = self.a*super().value(M)
+        F = self.a*super().value()
 
         # Goal terms
         for w,g in zip(self.weights,self.goals):
@@ -153,19 +164,19 @@ class GotchaObjective(TuckerObjective):
         Y = self.Mf-self.X
         
         # Goal terms
-        Yg = np.zeros(M.shape)
+        Yg = np.zeros(self._shape)
         for w,g in zip(self.weights,self.goals):
             Yg += w * g.computeDeriv(self.Mfs)
         Yg = ttb.tensor(Yg)
         Yg = self.scaler.unscale_tensor(Yg, shift=False)
 
         # Compute gradiennt
-        Gf = [None]*M.ndims
+        Gf = [None]*self._ndims
         Zb = (2*self.a)*Y + self.b*Yg
-        for i in range(M.ndims-1,-1,-1):
+        for i in range(self._ndims-1,-1,-1):
             Gf[i] = Zb.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zb = Zb.ttm(M.factor_matrices[i].T,i)
-        G = ttb.ttensor(Zb,Gf)
+        G = ttb.ttensor(Zb, Gf)
         toc = _time.time()
         self.times['gradient'].append(toc - tic)
         return G
@@ -174,7 +185,7 @@ class GotchaObjective(TuckerObjective):
         tic = _time.time()
         # Form tangent of reconstructed tensor
         Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
-        for i in range(1, M.ndims):
+        for i in range(1, self._ndims):
             Zd = self.Z[i-1].ttm(V.factor_matrices[i],i) + Zd.ttm(M.factor_matrices[i],i)
         Md = ttb.tensor(Zd.data)
         Md = self.scaler.unscale_tensor(Md, shift=False)
@@ -183,7 +194,7 @@ class GotchaObjective(TuckerObjective):
         recomp_times = []
 
         # compute necessary gradient info
-        Yd = np.zeros(M.shape,order='F')
+        Yd = np.zeros(self._shape,order='F')
         for w,g in zip(self.weights,self.goals):
             var = g.var
             time = g.time
@@ -235,8 +246,8 @@ class GotchaObjective(TuckerObjective):
 
         # compute Gauss-Newton Hessian-vector product
         Zbd = (2*self.a)*Zd + self.b*Yd
-        Hv = [None]*M.ndims
-        for i in range(M.ndims-1,-1,-1):
+        Hv = [None]*self._ndims
+        for i in range(self._ndims-1,-1,-1):
             Hv[i] = Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zbd = Zbd.ttm(M.factor_matrices[i].T,i)
         Hv = ttb.ttensor(Zbd, Hv)
@@ -250,38 +261,38 @@ class GotchaObjective(TuckerObjective):
 
     def gn_diag_block_goal_updates(self, M):
         tic = _time.time()
-        factor_cols = [[] for _ in range(M.ndims + 1)]
+        factor_cols = [[] for _ in range(self._ndims + 1)]
         for w, g in zip(self.weights, self.goals):
             goal_scale = np.sqrt(2*self.b*w)
             time = g.time
             _, jac = g.computeTarget(self.Mfs, compute_deriv=True)
-            jac_mat_shape = M.shape[0:M.ndims-1] + (1,)
+            jac_mat_shape = self._shape[0:self._ndims-1] + (1,)
             for t in time:
                 jac_t = ttb.tensor(jac[:,:,:,t], shape=jac_mat_shape, copy=False)
                 jac_t = self.scaler.unscale_tensor(jac_t, shift=False)
 
-                for n in range(M.ndims):
+                for n in range(self._ndims):
                     mats, dims = [], []
-                    for i in range(M.ndims):
+                    for i in range(self._ndims):
                         if i != n:
-                            if i == M.ndims-1:
+                            if i == self._ndims-1:
                                 mats.append(np.reshape(M.factor_matrices[i][t,:],(1,-1)))
                             else:
                                 mats.append(M.factor_matrices[i])
                             dims.append(i)
                     D = jac_t.ttm(mats, dims=dims, transpose=True)
                     D = D.to_tenmat(np.array([n])).data @ M.core.to_tenmat(np.array([n])).data.T
-                    if n == M.ndims-1:
-                        D2 = np.zeros((M.shape[n], M.core.shape[n]))
+                    if n == self._ndims-1:
+                        D2 = np.zeros((self._shape[n], M.core.shape[n]))
                         D2[t,:] = D
                         D = D2
                     D = goal_scale * np.reshape(D, (-1,1), order='F')
                     factor_cols[n].append(D)
 
                 # Core term
-                mats = [M.factor_matrices[i] for i in range(M.ndims-1)]
+                mats = [M.factor_matrices[i] for i in range(self._ndims-1)]
                 mats.append(np.reshape(M.factor_matrices[-1][t,:],(1,-1)))
-                dims = list(range(M.ndims))
+                dims = list(range(self._ndims))
                 D = jac_t.ttm(mats, dims=dims, transpose=True)
                 D = goal_scale * np.reshape(D.data, (-1,1), order='F')
                 factor_cols[-1].append(D)
@@ -293,23 +304,23 @@ class GotchaObjective(TuckerObjective):
 
     # Computes the diagonal blocks of the Gauss-Newton Hessian with respect to the factor matrices
     def compute_diag_blocks(self, M):
-        S = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(M.ndims)]
+        S = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(self._ndims)]
         C = []
         goal_updates = self.gn_diag_block_goal_updates(M)
 
-        for n in range(M.ndims):
+        for n in range(self._ndims):
             D = np.array([1])
-            for i in range(M.ndims-1, -1, -1):
+            for i in range(self._ndims-1, -1, -1):
                 if i != n:
                     D = np.kron(D, S[i])
             G = M.core.to_tenmat(np.array([n])).data
             D = (2*self.a) * G @ D @ G.T
-            D = np.kron(D, np.eye(M.shape[n]))
+            D = np.kron(D, np.eye(self._shape[n]))
             D += goal_updates[n] @ goal_updates[n].T
             C.append(D)
 
         D = np.array([1])
-        for i in range(M.ndims-1, -1, -1):
+        for i in range(self._ndims-1, -1, -1):
             D = np.kron(D, S[i])
         D = (2*self.a) * D
         D += goal_updates[-1] @ goal_updates[-1].T
@@ -327,7 +338,7 @@ class GotchaObjective(TuckerObjective):
     def recompute_bj_prec(self, M):
         goals = self.gn_diag_block_goal_updates(M)
         tic = _time.time()
-        n = M.ndims
+        n = self._ndims
         grams = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(n)]
         self.C = []
         for k in range(n):
@@ -337,7 +348,7 @@ class GotchaObjective(TuckerObjective):
                     D = np.kron(D, grams[i])
             G = M.core.to_tenmat(np.array([k])).data
             D = (2*self.a) * G @ D @ G.T
-            block = linops.InvUpdatedKronPosDef([D, np.eye(M.shape[k])], goals[k])
+            block = linops.InvUpdatedKronPosDef([D, np.eye(self._shape[k])], goals[k])
             self.C.append(block)
         grams[0] *= (2*self.a)
         kron_args = grams[::-1]

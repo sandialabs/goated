@@ -17,5 +17,6 @@ dependencies = [
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
+exo = ["netCDF4"]
 genten = ["pygenten"]
 dask = ["dask"]

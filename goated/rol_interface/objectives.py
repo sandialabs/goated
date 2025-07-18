@@ -32,8 +32,8 @@ class GoatedRolObjective(pyrol.Objective):
         self._objective.update(x)
 
     def value(self, x, tol):
-        x = x.to_tensor()
-        return self._objective.value(x)
+        #x = x.to_tensor()
+        return self._objective.value()
 
     def gradient(self, g, x, tol):
         x = x.to_tensor()

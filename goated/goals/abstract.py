@@ -8,6 +8,7 @@ class Goal:
         self.time = time
         self.exo = exo
         self.target = self.computeTarget(X)
+        self.domain_shape = X.shape
 
     # Abstract function to be implemented in derived classes
     def computeTarget(self,X):
