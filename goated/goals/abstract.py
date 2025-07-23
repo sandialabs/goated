@@ -4,10 +4,9 @@ from typing import Tuple, Optional
 
 class Goal:
 
-    def __init__(self, X, var, time, exo):
+    def __init__(self, X, var, time):
         self.var = var
         self.time = time
-        self.exo = exo
         self.target, _ = self.computeTarget(X)
         self.domain_shape = X.shape
         self.val : float = -1
