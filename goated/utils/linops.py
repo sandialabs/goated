@@ -96,7 +96,7 @@ def is_2d_square(arg) -> bool:
     return arg.shape[0] == arg.shape[1]
 
 
-RealLinOp_like = Union[RealLinOp, np.ndarray]
+RealLinOp_like = RealLinOp | np.ndarray
 
 
 class InvTriangular(RealLinOp):

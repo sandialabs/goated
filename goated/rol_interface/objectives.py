@@ -2,6 +2,8 @@ import numpy as np
 
 import pyrol
 from goated.rol_interface.vectors import TuckerVector, CPVector
+from goated.cp import CPObjective
+from goated.tucker import TuckerObjective
 
 from tqdm import tqdm
 
@@ -19,20 +21,26 @@ def dask_parallel_eval(callable, iterable, num_workers=4):
     return results
 
 
+
+
 class GoatedRolObjective(pyrol.Objective):
 
-    def __init__(self, precondition, objective, rolvector_type):
+    def __init__(self, objective : TuckerObjective | CPObjective, precondition: bool):
         super().__init__()
+        if isinstance(objective, TuckerObjective):
+            self._rolvector_type = TuckerVector
+        elif isinstance(objective, CPObjective):
+            self._rolvector_type = CPVector
+        else:
+            raise ValueError()
         self._objective = objective
         self._precondition = precondition
-        self._rolvector_type = rolvector_type
 
     def update(self, x, update_type, iter):
         x = x.to_tensor()
         self._objective.update(x)
 
     def value(self, x, tol):
-        #x = x.to_tensor()
         return self._objective.value()
 
     def gradient(self, g, x, tol):

@@ -43,7 +43,7 @@ def build_cp_parameter_list():
 
 class GoatedRolModel:
 
-    def __init__(self, objective: Union[TuckerObjective, CPObjective], initial_decomp) -> None:
+    def __init__(self, objective: TuckerObjective | CPObjective, initial_decomp) -> None:
 
         if isinstance(objective, TuckerObjective):
             self._rolvector_type = TuckerVector
@@ -72,7 +72,7 @@ class GoatedRolModel:
     
     def solve(self, rol_params=None, precondition=True):
         self._rol_params    = rol_params if rol_params is not None else self.default_rol_params()
-        self._rol_objective = GoatedRolObjective(precondition, self.objective, self._rolvector_type)
+        self._rol_objective = GoatedRolObjective(self.objective, precondition=precondition)
         self._rol_problem   = pyrol.Problem(self._rol_objective, self._rol_x, self._rol_g)
         self._rol_solver    = pyrol.Solver(self._rol_problem, self._rol_params)
         stream = pyrol.getCout()
