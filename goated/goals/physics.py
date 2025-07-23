@@ -1,9 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from goated.goals.abstract import Goal
+from typing import Tuple
 
 
-def compute_momentum(X, var, time, exo, compute_deriv=False):
+def compute_momentum(X, var, time, exo, compute_deriv=False) -> Tuple[float, np.ndarray]:
     func = lambda v: np.sum(v**2,axis=2)
     deriv = lambda v: 2.0*v
     out = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
@@ -14,24 +15,30 @@ def compute_momentum(X, var, time, exo, compute_deriv=False):
         jac[np.ix_(range(jac.shape[0]),range(jac.shape[1]),var,time)] *= 0.5/np.reshape(p,(1,1,1,len(time)))
         return p,jac
     else:
-        return np.sqrt(out)
+        return np.sqrt(out), np.empty(())
 
 
-def compute_internal_energy(X, var, time, exo, compute_deriv=False):
+def compute_internal_energy(X, var, time, exo, compute_deriv=False) -> Tuple[float, np.ndarray]:
     func = lambda v: np.prod(v,axis=2)
     deriv = lambda v: v[:,:,[1,0],:]
     out = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
-    return out
+    if compute_deriv:
+        return out
+    else:
+        return out, np.empty(())
 
 
-def compute_magnetic_energy(X, var, time, exo, compute_deriv=False):
+def compute_magnetic_energy(X, var, time, exo, compute_deriv=False) -> Tuple[float, np.ndarray]:
     func = lambda v: 0.5*np.sum(v**2,axis=2)
     deriv = lambda v: v
     out = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
-    return out
+    if compute_deriv:
+        return out
+    else:
+        return out, np.empty(())
 
 
-def compute_kinetic_energy(X, var, time, exo, compute_deriv=False):
+def compute_kinetic_energy(X, var, time, exo, compute_deriv=False) -> Tuple[float, np.ndarray]:
     func = lambda v: 0.5*np.sum(v[:,:,1:,:]**2,axis=2)/v[:,:,0,:]
     def deriv(v):
         J = np.zeros(v.shape)
@@ -39,10 +46,13 @@ def compute_kinetic_energy(X, var, time, exo, compute_deriv=False):
         J[:,:,1:,:] = v[:,:,1:,:] / np.reshape(v[:,:,0,:],(J.shape[0],J.shape[1],1,J.shape[3]))
         return J
     out = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
-    return out
+    if compute_deriv:
+        return out
+    else:
+        return out, np.empty(())
 
 
-def compute_total_energy(X, var, time, exo, compute_deriv=False):
+def compute_total_energy(X, var, time, exo, compute_deriv=False) -> Tuple[float, np.ndarray]:
     num_space = X.ndims - 2
     if num_space == 2:
         B_var = var[0:2]
@@ -56,23 +66,23 @@ def compute_total_energy(X, var, time, exo, compute_deriv=False):
         T_var = [var[7]]
 
     if compute_deriv:
-        T,J_T = compute_internal_energy(X, rho_var+T_var, time, exo)
-        P,J_P = compute_kinetic_energy(X, rho_var+mom_var, time, exo)
-        B,J_B = compute_magnetic_energy(X, B_var, time, exo)
+        T, J_T = compute_internal_energy(X,    rho_var + T_var, time, exo, compute_deriv=True)
+        P, J_P = compute_kinetic_energy( X,  rho_var + mom_var, time, exo, compute_deriv=True)
+        B, J_B = compute_magnetic_energy(X,              B_var, time, exo, compute_deriv=True)
         E = T + P + B
         J = J_T + J_P + J_B
-        return E,J
+        return E, J
     else:
-        T = compute_internal_energy(X, rho_var+T_var, time, exo)
-        P = compute_kinetic_energy(X, rho_var+mom_var, time, exo)
-        B = compute_magnetic_energy(X, B_var, time, exo)
-        return T + P + B
+        T, _ = compute_internal_energy(X,    rho_var + T_var, time, exo, compute_deriv=False)
+        P, _ = compute_kinetic_energy( X,  rho_var + mom_var, time, exo, compute_deriv=False)
+        B, _ = compute_magnetic_energy(X,              B_var, time, exo, compute_deriv=False)
+        return T + P + B, np.empty(())
 
 
 def compute_energies(X,rho_var,T_var,mom_var,B_var,time,exo):
-    T = compute_internal_energy(X, rho_var+T_var, time, exo)
-    P = compute_kinetic_energy(X, rho_var+mom_var, time, exo)
-    B = compute_magnetic_energy(X, B_var, time, exo)
+    T, _ = compute_internal_energy(X, rho_var+T_var, time, exo)
+    P, _ = compute_kinetic_energy(X, rho_var+mom_var, time, exo)
+    B, _ = compute_magnetic_energy(X, B_var, time, exo)
     E = T + P + B
     return E,T,P,B
 

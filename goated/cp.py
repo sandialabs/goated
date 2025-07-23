@@ -18,8 +18,6 @@ class CPObjective:
         self.Mf = M.full()
         
     def value(self):
-        # NOTE: M unused, but might need to keep for rol_objective purposes.
-        #
         Y = self.Mf-self.X
         F = (Y.norm()**2)/self.s
         return F
@@ -27,7 +25,7 @@ class CPObjective:
     def gradient(self, M):
         Y = (2/self.s)*(self.Mf-self.X)
         G = Y.mttkrps(M)
-        # Why not use self.Mf, or store self.M?
+        # ^ Why not use self.Mf, or store self.M?
         self.recompute_hess = True
         self.recompute_prec = True
         return G
@@ -56,7 +54,7 @@ class CPObjective:
 
         Ab = V.factor_matrices
         Sb = [Ab[k].T @ A[k] for k in range(d)]
-        Hv = [None]*d
+        Hv = []
         for k in range(d):
             # accumulate off-diagonal factors
             Ukb = np.zeros((r, r))
@@ -65,7 +63,7 @@ class CPObjective:
                     Ukb += self.Ub[k,l,:,:]*Sb[l]
 
             # Gauss-Newton Hessian-vector product
-            Hv[k] = (2/self.s) * (Ab[k] @ self.U[k] + A[k] @ Ukb)
+            Hv.append((2/self.s) * (Ab[k] @ self.U[k] + A[k] @ Ukb))
 
         self.recompute_hess = False
         return Hv
@@ -89,11 +87,11 @@ class CPObjective:
 
         #  Gauss-Newton block diagonal preconditioner
         Ab = V.factor_matrices
-        Pv = [None]*d
+        Pv = []
         for k in range(d):
             tmp = la.solve_triangular(self.Vc[k], Ab[k].T, trans='T')
             tmp = la.solve_triangular(self.Vc[k], tmp, trans='N', overwrite_b=True)
-            Pv[k] = (self.s/2)*tmp.T
+            Pv.append((self.s/2)*tmp.T)
         Pv = ttb.ktensor(Pv)
         self.recompute_prec = False
         return Pv

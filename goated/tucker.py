@@ -171,7 +171,6 @@ class TuckerGoals:
                 var = np.array(var)
             num_time = len(time)
             if self.recompute_hess:
-                # TODO: see how this contributes to the runtime of gn_hessvec.
                 ticc = _time.time()
                 val, jac = g.computeTarget(self.Mfs, compute_deriv=True)
                 tocc = _time.time()
