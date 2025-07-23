@@ -55,7 +55,7 @@ class GoatedRolModel:
         x = self._rolvector_type.from_tensor(initial_decomp, copy=True)
         g = x.dual()
         self.objective = objective
-        self.decomp = None
+        self._decomp = None
         self._rol_x = x
         self._rol_g = g
         self._rol_objective = None
@@ -77,5 +77,11 @@ class GoatedRolModel:
         self._rol_solver    = pyrol.Solver(self._rol_problem, self._rol_params)
         stream = pyrol.getCout()
         self._rol_solver.solve(stream)
-        self.decomp = self._rol_x.to_tensor()
+        self._decomp = self._rol_x.to_tensor()
         return
+
+    @property
+    def decomp(self):
+        if self._decomp is None:
+            raise RuntimeError('The solver is yet to be run!')
+        return self._decomp
