@@ -1,8 +1,8 @@
-import pyttb as ttb
+from pyttb import tensor, ttensor, ktensor  # type: ignore
 import numpy as np
 import scipy.linalg as la
 from goated.goals.abstract import Goal
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Sequence
 
 
 class CPObjective:
@@ -10,7 +10,7 @@ class CPObjective:
     def __init__(self, X, s=None):
         self.X = X
         self.s = s if s is not None else  self.X.norm()**2
-        self.Mf : Optional[ttb.tensor] = None
+        self.Mf : Optional[tensor] = None
         self._shape : Tuple[int,...] = X.shape
         self._ndims : int = len(self._shape)
 
@@ -92,25 +92,27 @@ class CPObjective:
             tmp = la.solve_triangular(self.Vc[k], Ab[k].T, trans='T')
             tmp = la.solve_triangular(self.Vc[k], tmp, trans='N', overwrite_b=True)
             Pv.append((self.s/2)*tmp.T)
-        Pv = ttb.ktensor(Pv)
+        Pv = ktensor(Pv)
         self.recompute_prec = False
         return Pv
     
 
 class CPGoals:
 
-    def __init__(self, scaler, goals : List[Goal], weights):
+    def __init__(self, scaler, goals : List[Goal], weights : Optional[Sequence[float]] = None):
         assert len(goals) > 0
         self.scaler = scaler
         self.goals = goals
+        if weights is None:
+            weights = np.ones((len(goals),), dtype=float)  # type: ignore
         self.weights = weights
-        self.Mf : ttb.tensor  = None  # type: ignore
-        self.Ms : ttb.ktensor = None  # type: ignore
+        self.Mf : tensor  = None  # type: ignore
+        self.Ms : ktensor = None  # type: ignore
         self._shape : Tuple[int,...] = goals[0].domain_shape
         self._ndim  : int = len(self._shape)
         self.recompute_hess = True
         
-    def update(self, M : ttb.ktensor):
+    def update(self, M : ktensor):
         self.Mf = self.scaler.unscale_tensor(M.full())
         self.Ms = self.scaler.unscale_ktensor(M)
         assert self.Mf.shape == self._shape
@@ -127,9 +129,9 @@ class CPGoals:
         Y = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
             Y += w * g.computeDeriv(self.Mf)
-        Y = ttb.tensor(Y)
+        Y = tensor(Y)
         V = Y.mttkrps(self.Ms)
-        V = ttb.ktensor(V)
+        V = ktensor(V)
         V = self.scaler.unscale_ktensor(V)
         self.recompute_hess = True
         return V
@@ -179,14 +181,25 @@ class CPGoals:
             Yd += w*jac_dot
 
         # compute unscaled Gauss-Newton Hessian-vector product
-        Yd = ttb.tensor(Yd)
+        Yd = tensor(Yd)
         Hv = Yd.mttkrps(self.Ms)
 
         # transform back to scaled variables
-        Hv = self.scaler.unscale_ktensor(ttb.ktensor(Hv))
+        Hv = self.scaler.unscale_ktensor(ktensor(Hv))
 
         self.recompute_hess = False
         return Hv
+
+    def eval_goals(self, U: tensor, scaled=False):   
+        if scaled:
+            U = self.scaler.unscale_tensor(U)
+        v = np.array([g.computeValue(U) for g in self.goals])
+        return v 
+
+    def auto_reweight(self, U: tensor, scaled=False):
+        v = self.eval_goals(U, scaled=scaled)
+        self.weights = 1 / (v * len(self.goals))
+        return
 
 
 class GocchaObjective(CPObjective):
@@ -211,14 +224,14 @@ class GocchaObjective(CPObjective):
         # ^ That sets self.recompute_hess = self.recompute_prec = True.
         Ggoal = self.goals.gradient()
         G = [self.a*G[i]+self.b*Ggoal.factor_matrices[i] for i in range(self._ndims)]
-        G = ttb.ktensor(G)
+        G = ktensor(G)
         return G
     
     def hessvec(self, M, V):
         Hv = super().hessvec(M,V)
         HvGoal = self.goals.hessvec(V)
         Hv = [self.a*Hv[i]+self.b*HvGoal.factor_matrices[i] for i in range(self._ndims)]
-        Hv = ttb.ktensor(Hv)
+        Hv = ktensor(Hv)
         return Hv
     
     def precvec(self, M, V):

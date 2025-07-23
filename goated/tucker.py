@@ -1,9 +1,10 @@
-import pyttb as ttb
+from pyttb import tensor, ttensor, ktensor  # type: ignore
 import numpy as np
 
 import goated.utils.linops as linops
 from collections import defaultdict
-from typing import Tuple, List, Optional
+from goated.goals.abstract import Goal
+from typing import Tuple, List, Optional, Sequence
 import time as _time
 
 
@@ -14,7 +15,7 @@ class TuckerObjective:
         self.s = s if s is not None else  self.X.norm()**2
         self._shape : Tuple[int,...] = X.shape
         self._ndims : int = len(self._shape)
-        self.Z : List[ttb.tensor] = []
+        self.Z : List[tensor] = []
         self.times = defaultdict(list)
         self.recompute_hess = True
         self.recompute_prec = True
@@ -53,7 +54,7 @@ class TuckerObjective:
         for i in reversed(range(self._ndims)):
             Gf[i] = Zb.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zb = Zb.ttm(M.factor_matrices[i].T,i)
-        G = ttb.ttensor(Zb, Gf)
+        G = ttensor(Zb, Gf)
         toc = _time.time()
         self.times['gradient'].append(toc - tic)
         return G
@@ -71,7 +72,7 @@ class TuckerObjective:
         for i in reversed(range(self._ndims)):
             Hv[i]= Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zbd = Zbd.ttm(M.factor_matrices[i].T,i)
-        Hv = ttb.ttensor(Zbd, Hv)
+        Hv = ttensor(Zbd, Hv)
 
         self.recompute_hess = False
         toc = _time.time()
@@ -119,7 +120,7 @@ class TuckerObjective:
         Pvc = V.core.data.ravel(order='F')
         Pvc = self.C[-1] @ Pvc
         Pvc = Pvc.reshape(V.core.shape, order='F')
-        Pv  = ttb.ttensor(ttb.tensor(Pvc), Pv)
+        Pv  = ttensor(tensor(Pvc), Pv)
         self.recompute_prec = False
         toc = _time.time()
         self.times['gn_bd_precvec'].append(toc - tic)
@@ -128,17 +129,19 @@ class TuckerObjective:
 
 class TuckerGoals:
 
-    def __init__(self, scaler, goals, weights):
+    def __init__(self, scaler, goals : List[Goal], weights : Optional[Sequence[float] | np.ndarray] = None):
         self.scaler = scaler
         self.goals = goals
+        if weights is None:
+            weights = np.ones((len(self.goals),))
         self.weights = weights
-        self.Mfs : ttb.ktensor = None  # type: ignore
+        self.Mfs : ktensor = None  # type: ignore
         self._shape : Tuple[int,...] = goals[0].domain_shape
         self._ndim  : int = len(self._shape)
         self.recompute_hess = True
         self.DEBUG = False
         
-    def update(self, Mfs : ttb.ktensor):
+    def update(self, Mfs : ktensor):
         self.Mfs = Mfs
         self.recompute_hess = True
 
@@ -153,7 +156,7 @@ class TuckerGoals:
         Yg = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
             Yg += w * g.computeDeriv(self.Mfs)
-        Yg = ttb.tensor(Yg)
+        Yg = tensor(Yg)
         Yg = self.scaler.unscale_tensor(Yg, shift=False)
         return Yg
     
@@ -218,7 +221,7 @@ class TuckerGoals:
             _, jac = g.computeTarget(self.Mfs, compute_deriv=True)
             jac_mat_shape = self._shape[0:self._ndim-1] + (1,)
             for t in time:
-                jac_t = ttb.tensor(jac[:,:,:,t], shape=jac_mat_shape, copy=False)
+                jac_t = tensor(jac[:,:,:,t], shape=jac_mat_shape, copy=False)
                 jac_t = self.scaler.unscale_tensor(jac_t, shift=False)
 
                 for n in range(self._ndim):
@@ -250,6 +253,17 @@ class TuckerGoals:
         factors = [np.column_stack(cols) for cols in factor_cols]
         toc = _time.time()
         return factors, toc - tic
+
+    def eval_goals(self, U: tensor, scaled=False):   
+        if scaled:
+            U = self.scaler.unscale_tensor(U)
+        v = np.array([g.computeValue(U) for g in self.goals])
+        return v 
+
+    def auto_reweight(self, U: tensor, scaled=False):
+        v = self.eval_goals(U, scaled=scaled)
+        self.weights = 1 / (v * len(self.goals))
+        return
 
 
 class GotchaObjective(TuckerObjective):
@@ -284,7 +298,7 @@ class GotchaObjective(TuckerObjective):
         for i in range(self._ndims - 1, -1, -1):
             Gf[i] = Zb.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zb = Zb.ttm(M.factor_matrices[i].T,i)
-        G = ttb.ttensor(Zb, Gf)
+        G = ttensor(Zb, Gf)
         toc = _time.time()
         self.times['gradient'].append(toc - tic)
         return G
@@ -295,7 +309,7 @@ class GotchaObjective(TuckerObjective):
         Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
         for i in range(1, self._ndims):
             Zd = self.Z[i-1].ttm(V.factor_matrices[i],i) + Zd.ttm(M.factor_matrices[i],i)
-        Md = ttb.tensor(Zd.data)
+        Md = tensor(Zd.data)
         Md = self.scaler.unscale_tensor(Md, shift=False)
         Md = Md.data
 
@@ -308,7 +322,7 @@ class GotchaObjective(TuckerObjective):
         for i in reversed(range(self._ndims)):
             Hv[i] = Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zbd = Zbd.ttm(M.factor_matrices[i].T,i)
-        Hv = ttb.ttensor(Zbd, Hv)
+        Hv = ttensor(Zbd, Hv)
 
         self.recompute_hess = False
         toc = _time.time()

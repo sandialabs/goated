@@ -160,8 +160,8 @@ def plot_energies(X,u,rho_var,T_var,mom_var,B_var,time_ind,time_val,exo,scaler):
 
 class MomentumGoal(Goal):
     def __init__(self, X, var, time, exo):
-        super().__init__(X, var, time)
         self.exo = exo
+        super().__init__(X, var, time)
 
     def computeTarget(self,U,compute_deriv=False):
         return compute_momentum(U,self.var,self.time,self.exo,compute_deriv)
@@ -169,8 +169,8 @@ class MomentumGoal(Goal):
 
 class InternalEnergyGoal(Goal):
     def __init__(self, X, var, time, exo):
-        super().__init__(X, var, time)
         self.exo = exo
+        super().__init__(X, var, time)
 
     def computeTarget(self,U,compute_deriv=False):
         return compute_internal_energy(U,self.var,self.time,self.exo,compute_deriv)
@@ -178,8 +178,8 @@ class InternalEnergyGoal(Goal):
 
 class MagneticEnergyGoal(Goal):
     def __init__(self, X, var, time, exo):
-        super().__init__(X, var, time)
         self.exo = exo
+        super().__init__(X, var, time)
 
     def computeTarget(self,U,compute_deriv=False):
         return compute_magnetic_energy(U,self.var,self.time,self.exo,compute_deriv)
@@ -187,8 +187,8 @@ class MagneticEnergyGoal(Goal):
 
 class KineticEnergyGoal(Goal):
     def __init__(self, X, var, time, exo):
-        super().__init__(X, var, time)
         self.exo = exo
+        super().__init__(X, var, time)
 
     def computeTarget(self,U,compute_deriv=False):
         return compute_kinetic_energy(U,self.var,self.time,self.exo,compute_deriv)
@@ -196,8 +196,8 @@ class KineticEnergyGoal(Goal):
 
 class TotalEnergyGoal(Goal):
     def __init__(self, X, var, time, exo):
-        super().__init__(X, var, time)
         self.exo = exo
+        super().__init__(X, var, time)
 
     def computeTarget(self,U,compute_deriv=False):
         return compute_total_energy(U,self.var,self.time,self.exo,compute_deriv)
