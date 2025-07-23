@@ -106,16 +106,18 @@ class CPGoals:
         self.scaler = scaler
         self.goals = goals
         self.weights = weights
-        self.Mf : Optional[ttb.tensor]  = None
-        self.Ms : Optional[ttb.ktensor] = None
+        self.Mf : ttb.tensor  = None  # type: ignore
+        self.Ms : ttb.ktensor = None  # type: ignore
         self._shape : Tuple[int,...] = goals[0].domain_shape
         self._ndim  : int = len(self._shape)
+        self.recompute_hess = True
         
     def update(self, M : ttb.ktensor):
         self.Mf = self.scaler.unscale_tensor(M.full())
         self.Ms = self.scaler.unscale_ktensor(M)
         assert self.Mf.shape == self._shape
         assert self.Ms.shape == self._shape
+        self.recompute_hess = True
         
     def value(self):
         F = 0
@@ -158,12 +160,11 @@ class CPGoals:
             time = g.time
             num_time = len(time)
             if self.recompute_hess:
-                val,jac = g.computeTarget(self.Mf, compute_deriv=True)
-                setattr(g,'val',val)
-                setattr(g,'jac',jac)
-            else:
-                val = g.val
-                jac = g.jac
+                val, jac = g.computeTarget(self.Mf, compute_deriv=True) # type: ignore
+                g.val = val
+                g.jac = jac
+            val = g.val
+            jac = g.jac
                 
             # compute val_dot (could tangent-differentiate fcn, but since we already have jac, we just do a mat-vec)
             val_dot = np.zeros((num_time,1))
@@ -203,8 +204,8 @@ class GocchaObjective(CPObjective):
         self.goals.update(M)
         
     def value(self):
-        F = self.a*super().value()
-        F += self.b*self.goals.value()
+        F  = self.a * super().value()
+        F += self.b * self.goals.value()
         return F
     
     def gradient(self, M):

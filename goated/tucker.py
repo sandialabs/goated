@@ -16,6 +16,8 @@ class TuckerObjective:
         self._ndims : int = len(self._shape)
         self.Z : List[ttb.tensor] = []
         self.times = defaultdict(list)
+        self.recompute_hess = True
+        self.recompute_prec = True
 
     def full(self, M):
         # Same as M.full(), except saves the intermediate tensors
@@ -46,12 +48,12 @@ class TuckerObjective:
     def gradient(self, M):
         tic = _time.time()
         Y = (2/self.s)*(self.Mf-self.X)
-        Gf = [None]*self._ndims
+        Gf = [np.empty(())]*self._ndims
         Zb = Y
-        for i in range(self._ndims-1,-1,-1):
+        for i in reversed(range(self._ndims)):
             Gf[i] = Zb.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zb = Zb.ttm(M.factor_matrices[i].T,i)
-        G = ttb.ttensor(Zb,Gf)
+        G = ttb.ttensor(Zb, Gf)
         toc = _time.time()
         self.times['gradient'].append(toc - tic)
         return G
@@ -65,8 +67,8 @@ class TuckerObjective:
 
         # compute Gauss-Newton Hessian-vector product
         Zbd = (2/self.s)*Zd
-        Hv = [None]*self._ndims
-        for i in range(self._ndims-1,-1,-1):
+        Hv = [np.empty(())]*self._ndims
+        for i in reversed(range(self._ndims)):
             Hv[i]= Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zbd = Zbd.ttm(M.factor_matrices[i].T,i)
         Hv = ttb.ttensor(Zbd, Hv)
@@ -130,16 +132,133 @@ class TuckerGoals:
         self.scaler = scaler
         self.goals = goals
         self.weights = weights
+        self.Mfs : ttb.ktensor = None  # type: ignore
+        self._shape : Tuple[int,...] = goals[0].domain_shape
+        self._ndim  : int = len(self._shape)
+        self.recompute_hess = True
+        self.DEBUG = False
         
+    def update(self, Mfs : ttb.ktensor):
+        self.Mfs = Mfs
+        self.recompute_hess = True
+
+    def value(self):
+        F = 0.0
+        for w,g in zip(self.weights, self.goals):
+            F += w * g.computeValue(self.Mfs)
+        return F
+
+    def gradient(self):
+        # Goal terms
+        Yg = np.zeros(self._shape)
+        for w,g in zip(self.weights, self.goals):
+            Yg += w * g.computeDeriv(self.Mfs)
+        Yg = ttb.tensor(Yg)
+        Yg = self.scaler.unscale_tensor(Yg, shift=False)
+        return Yg
+    
+    def hessvec(self, Md, recomp_times=None):
+        # compute necessary gradient info
+        if recomp_times is None:
+            recomp_times = []
+        Yd = np.zeros(self._shape, order='F')
+        for w,g in zip(self.weights, self.goals):
+            var = g.var
+            time = g.time
+            if not isinstance(time, np.ndarray):
+                time = np.array(time)
+            if not isinstance(var, np.ndarray):
+                var = np.array(var)
+            num_time = len(time)
+            if self.recompute_hess:
+                # TODO: see how this contributes to the runtime of gn_hessvec.
+                ticc = _time.time()
+                val, jac = g.computeTarget(self.Mfs, compute_deriv=True)
+                tocc = _time.time()
+                recomp_times.append(tocc - ticc)
+                g.val = val
+                g.jac = jac
+            val = g.val
+            jac = g.jac
+             
+            # compute val_dot (could tangent-differentiate fcn, but since we already have jac, we just do a mat-vec)
+            jact = jac[:,:,:,time]
+            Mdt  = Md[:,:,:,time]
+            val_dot = np.zeros((num_time,))
+            val_dot[:] = np.einsum('hijk,hijk->k', jact[:,:,var,:], Mdt[:,:,var,:])
+            if self.DEBUG:
+                vd = np.zeros((num_time,))
+                for i in range(num_time):
+                    vd[i] = np.reshape(jac[:,:,var,time[i]],(1,-1),order='F') @ np.reshape(Md[:,:,var,time[i]],(-1,1),order='F')
+                
+            # compute dot gradient tensor dF/dM(i,j,v,t)
+            jac_dot = np.zeros(jac.shape)
+            mask_t = np.zeros(jac.shape, dtype=bool)
+            mask_v = np.zeros(jac.shape, dtype=bool)
+            mask_t[:,:,:,time] = True
+            mask_v[:,:,var,:]  = True 
+            ro = 'C'  # doesn't matter, just be explicit.
+            mask = (mask_t & mask_v).ravel(order=ro)
+            jac_dot.ravel(order=ro)[mask] = (2*val_dot[None,None,:]*jact[:,:,var,:]).ravel(order=ro)
+            if self.DEBUG:
+                jd = np.zeros(jac.shape)
+                for i in range(num_time):
+                    jd[:,:,var,time[i]] = 2*val_dot[i]*jac[:,:,var,time[i]]
+
+            Yd += w*jac_dot
+        Yd = self.scaler.unscale_tensor(Yd, shift=False)
+        self.recompute_hess = False
+        return Yd
+
+    def gn_diag_block_goal_updates(self, M, parent_b):
+        tic = _time.time()
+        factor_cols = [[] for _ in range(self._ndim + 1)]
+        for w, g in zip(self.weights, self.goals):
+            goal_scale = np.sqrt(2 *parent_b * w)
+            time = g.time
+            _, jac = g.computeTarget(self.Mfs, compute_deriv=True)
+            jac_mat_shape = self._shape[0:self._ndim-1] + (1,)
+            for t in time:
+                jac_t = ttb.tensor(jac[:,:,:,t], shape=jac_mat_shape, copy=False)
+                jac_t = self.scaler.unscale_tensor(jac_t, shift=False)
+
+                for n in range(self._ndim):
+                    mats, dims = [], []
+                    for i in range(self._ndim):
+                        if i != n:
+                            if i == self._ndim-1:
+                                mats.append(np.reshape(M.factor_matrices[i][t,:],(1,-1)))
+                            else:
+                                mats.append(M.factor_matrices[i])
+                            dims.append(i)
+                    D = jac_t.ttm(mats, dims=dims, transpose=True)
+                    D = D.to_tenmat(np.array([n])).data @ M.core.to_tenmat(np.array([n])).data.T
+                    if n == self._ndim-1:
+                        D2 = np.zeros((self._shape[n], M.core.shape[n]))
+                        D2[t,:] = D
+                        D = D2
+                    D = goal_scale * np.reshape(D, (-1,1), order='F')
+                    factor_cols[n].append(D)
+
+                # Core term
+                mats = [M.factor_matrices[i] for i in range(self._ndim-1)]
+                mats.append(np.reshape(M.factor_matrices[-1][t,:],(1,-1)))
+                dims = list(range(self._ndim))
+                D = jac_t.ttm(mats, dims=dims, transpose=True)
+                D = goal_scale * np.reshape(D.data, (-1,1), order='F')
+                factor_cols[-1].append(D)
+
+        factors = [np.column_stack(cols) for cols in factor_cols]
+        toc = _time.time()
+        return factors, toc - tic
 
 
 class GotchaObjective(TuckerObjective):
 
-    def __init__(self, X, scaler, goals, weights, a, b, jacobi=True):
+    def __init__(self, X, scaler, goals : TuckerGoals, a, b, jacobi=True):
         super().__init__(X, s=1.0)
         self.scaler = scaler
         self.goals = goals
-        self.weights = weights
         self.a = a
         self.b = b
         self.jacobi = jacobi
@@ -148,32 +267,22 @@ class GotchaObjective(TuckerObjective):
     def update(self, M):
         super().update(M)
         self.Mfs = self.scaler.unscale_tensor(self.Mf)
+        self.goals.update(self.Mfs)
         
     def value(self):
-        # Tensor term
-        F = self.a*super().value()
-
-        # Goal terms
-        for w,g in zip(self.weights,self.goals):
-            F += (self.b * w) * g.computeValue(self.Mfs)
+        F  = self.a * super().value()
+        F += self.b * self.goals.value()
         return F
     
     def gradient(self, M):
         tic = _time.time()
-        # Tensor term
+        # Initialize with goal terms
+        Yg = self.goals.gradient()
+        # Accumulate tensor terms
         Y = self.Mf-self.X
-        
-        # Goal terms
-        Yg = np.zeros(self._shape)
-        for w,g in zip(self.weights,self.goals):
-            Yg += w * g.computeDeriv(self.Mfs)
-        Yg = ttb.tensor(Yg)
-        Yg = self.scaler.unscale_tensor(Yg, shift=False)
-
-        # Compute gradiennt
-        Gf = [None]*self._ndims
+        Gf = [np.empty(())]*self._ndims
         Zb = (2*self.a)*Y + self.b*Yg
-        for i in range(self._ndims-1,-1,-1):
+        for i in range(self._ndims - 1, -1, -1):
             Gf[i] = Zb.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zb = Zb.ttm(M.factor_matrices[i].T,i)
         G = ttb.ttensor(Zb, Gf)
@@ -192,62 +301,12 @@ class GotchaObjective(TuckerObjective):
         Md = Md.data
 
         recomp_times = []
-
-        # compute necessary gradient info
-        Yd = np.zeros(self._shape,order='F')
-        for w,g in zip(self.weights,self.goals):
-            var = g.var
-            time = g.time
-            if not isinstance(time, np.ndarray):
-                time = np.array(time)
-            if not isinstance(var, np.ndarray):
-                var = np.array(var)
-            num_time = len(time)
-            if self.recompute_hess:
-                # TODO: see how this contributes to the runtime of gn_hessvec.
-                ticc = _time.time()
-                val,jac = g.computeTarget(self.Mfs, compute_deriv=True)
-                tocc = _time.time()
-                recomp_times.append(tocc - ticc)
-                setattr(g,'val',val)
-                setattr(g,'jac',jac)
-            else:
-                val = g.val
-                jac = g.jac
-
-            DEBUG = False
-                
-            # compute val_dot (could tangent-differentiate fcn, but since we already have jac, we just do a mat-vec)
-            jact = jac[:,:,:,time]
-            Mdt  = Md[:,:,:,time]
-            val_dot = np.zeros((num_time,))
-            val_dot[:] = np.einsum('hijk,hijk->k', jact[:,:,var,:], Mdt[:,:,var,:])
-            if DEBUG:
-                vd = np.zeros((num_time,))
-                for i in range(num_time):
-                    vd[i] = np.reshape(jac[:,:,var,time[i]],(1,-1),order='F') @ np.reshape(Md[:,:,var,time[i]],(-1,1),order='F')
-                
-            # compute dot gradient tensor dF/dM(i,j,v,t)
-            jac_dot = np.zeros(jac.shape)
-            mask_t = np.zeros(jac.shape, dtype=bool)
-            mask_v = np.zeros(jac.shape, dtype=bool)
-            mask_t[:,:,:,time] = True
-            mask_v[:,:,var,:]  = True 
-            ro = 'C'  # doesn't matter, just be explicit.
-            mask = (mask_t & mask_v).ravel(order=ro)
-            jac_dot.ravel(order=ro)[mask] = (2*val_dot[None,None,:]*jact[:,:,var,:]).ravel(order=ro)
-            if DEBUG:
-                jd = np.zeros(jac.shape)
-                for i in range(num_time):
-                    jd[:,:,var,time[i]] = 2*val_dot[i]*jac[:,:,var,time[i]]
-
-            Yd += w*jac_dot
-        Yd = self.scaler.unscale_tensor(Yd, shift=False)
+        Yd = self.goals.hessvec(Md, recomp_times)
 
         # compute Gauss-Newton Hessian-vector product
         Zbd = (2*self.a)*Zd + self.b*Yd
-        Hv = [None]*self._ndims
-        for i in range(self._ndims-1,-1,-1):
+        Hv = [np.empty(())] * self._ndims
+        for i in reversed(range(self._ndims)):
             Hv[i] = Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zbd = Zbd.ttm(M.factor_matrices[i].T,i)
         Hv = ttb.ttensor(Zbd, Hv)
@@ -258,85 +317,17 @@ class GotchaObjective(TuckerObjective):
         self.times['recompute hessian'].extend(recomp_times)
         self.times['gn_hessvec, marginal'].append(toc - tic - recomp_hess_time)
         return Hv
-
-    def gn_diag_block_goal_updates(self, M):
-        tic = _time.time()
-        factor_cols = [[] for _ in range(self._ndims + 1)]
-        for w, g in zip(self.weights, self.goals):
-            goal_scale = np.sqrt(2*self.b*w)
-            time = g.time
-            _, jac = g.computeTarget(self.Mfs, compute_deriv=True)
-            jac_mat_shape = self._shape[0:self._ndims-1] + (1,)
-            for t in time:
-                jac_t = ttb.tensor(jac[:,:,:,t], shape=jac_mat_shape, copy=False)
-                jac_t = self.scaler.unscale_tensor(jac_t, shift=False)
-
-                for n in range(self._ndims):
-                    mats, dims = [], []
-                    for i in range(self._ndims):
-                        if i != n:
-                            if i == self._ndims-1:
-                                mats.append(np.reshape(M.factor_matrices[i][t,:],(1,-1)))
-                            else:
-                                mats.append(M.factor_matrices[i])
-                            dims.append(i)
-                    D = jac_t.ttm(mats, dims=dims, transpose=True)
-                    D = D.to_tenmat(np.array([n])).data @ M.core.to_tenmat(np.array([n])).data.T
-                    if n == self._ndims-1:
-                        D2 = np.zeros((self._shape[n], M.core.shape[n]))
-                        D2[t,:] = D
-                        D = D2
-                    D = goal_scale * np.reshape(D, (-1,1), order='F')
-                    factor_cols[n].append(D)
-
-                # Core term
-                mats = [M.factor_matrices[i] for i in range(self._ndims-1)]
-                mats.append(np.reshape(M.factor_matrices[-1][t,:],(1,-1)))
-                dims = list(range(self._ndims))
-                D = jac_t.ttm(mats, dims=dims, transpose=True)
-                D = goal_scale * np.reshape(D.data, (-1,1), order='F')
-                factor_cols[-1].append(D)
-
-        factors = [np.column_stack(cols) for cols in factor_cols]
-        toc = _time.time()
-        self.times['gn_diag_block_goal_updates'].append(toc - tic)
-        return factors
-
-    # Computes the diagonal blocks of the Gauss-Newton Hessian with respect to the factor matrices
-    def compute_diag_blocks(self, M):
-        S = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(self._ndims)]
-        C = []
-        goal_updates = self.gn_diag_block_goal_updates(M)
-
-        for n in range(self._ndims):
-            D = np.array([1])
-            for i in range(self._ndims-1, -1, -1):
-                if i != n:
-                    D = np.kron(D, S[i])
-            G = M.core.to_tenmat(np.array([n])).data
-            D = (2*self.a) * G @ D @ G.T
-            D = np.kron(D, np.eye(self._shape[n]))
-            D += goal_updates[n] @ goal_updates[n].T
-            C.append(D)
-
-        D = np.array([1])
-        for i in range(self._ndims-1, -1, -1):
-            D = np.kron(D, S[i])
-        D = (2*self.a) * D
-        D += goal_updates[-1] @ goal_updates[-1].T
-        C.append(D)
-
-        return C
     
     def recompute_bd_prec(self, M):
         if self.jacobi:
             self.recompute_bj_prec(M)
         else:
-            TuckerObjective.recompute_bd_prec(self, M)
+            super().recompute_bd_prec(M)
         return
 
     def recompute_bj_prec(self, M):
-        goals = self.gn_diag_block_goal_updates(M)
+        goal_panels, t = self.goals.gn_diag_block_goal_updates(M, self.b)
+        self.times['gn_diag_block_goal_updates'].append(t)
         tic = _time.time()
         n = self._ndims
         grams = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(n)]
@@ -348,13 +339,41 @@ class GotchaObjective(TuckerObjective):
                     D = np.kron(D, grams[i])
             G = M.core.to_tenmat(np.array([k])).data
             D = (2*self.a) * G @ D @ G.T
-            block = linops.InvUpdatedKronPosDef([D, np.eye(self._shape[k])], goals[k])
+            block = linops.InvUpdatedKronPosDef([D, np.eye(self._shape[k])], goal_panels[k])
             self.C.append(block)
         grams[0] *= (2*self.a)
         kron_args = grams[::-1]
-        B = linops.InvUpdatedKronPosDef(kron_args, goals[-1])
+        B = linops.InvUpdatedKronPosDef(kron_args, goal_panels[-1])
         self.C.append(B)
         toc = _time.time()
         self.times['recompute_bj_prec, marginal'].append(toc - tic)
         self.block_jacobi_ops_cache.append([op for op in self.C])
         return
+
+    def compute_diag_blocks(self, M):
+        # A helper function, for testing purposes only.
+        # Computes the diagonal blocks of the Gauss-Newton Hessian with respect to the factor matrices
+        # 
+        S = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(self._ndims)]
+        C = []
+        goal_updates, _ = self.goals.gn_diag_block_goal_updates(M, self.b)
+
+        for n in range(self._ndims):
+            D = np.array([1])
+            for i in reversed(range(self._ndims)):
+                if i != n:
+                    D = np.kron(D, S[i])
+            G = M.core.to_tenmat(np.array([n])).data
+            D = (2*self.a) * G @ D @ G.T
+            D = np.kron(D, np.eye(self._shape[n]))
+            D += goal_updates[n] @ goal_updates[n].T
+            C.append(D)
+
+        D = np.array([1])
+        for i in reversed(range(self._ndims)):
+            D = np.kron(D, S[i])
+        D = (2*self.a) * D
+        D += goal_updates[-1] @ goal_updates[-1].T
+        C.append(D)
+
+        return C

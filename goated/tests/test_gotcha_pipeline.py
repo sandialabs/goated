@@ -10,7 +10,7 @@ import goated.goals.physics as pgoals
 import goated.examples as goex
 
 import goated.rol_interface.models as rolm
-from goated.tucker import TuckerObjective, GotchaObjective
+from goated.tucker import TuckerObjective, GotchaObjective, TuckerGoals
 
 
 def build_tensor_goalobjects_and_scaler():
@@ -58,11 +58,13 @@ B_goal0 = B_goal.computeValue(U0)
 
 print(f'Initial fit = {fit0:.4f},\nmomentum goal = {mom_goal0:.2e},\ntotal energy goal = {E_goal0:.2e},\ninternal energy goal = {T_goal0:.2e},\nkinetic energy goal {P_goal0:.2e},\nmagnetic energy goal = {B_goal0:.2e}')
 
-goals = [mom_goal, T_goal, P_goal, B_goal]
-ng = len(goals)+1
+_goals = [mom_goal, T_goal, P_goal, B_goal]
+ng = len(_goals)+1
 weights = [1/(ng*mom_goal0),1/(ng*T_goal0),1/(ng*P_goal0),1/(ng*B_goal0)]
 a = 1/(ng*((Xs-us0.full()).norm()**2))
-gotcha = GotchaObjective(Xs, scaler, goals, weights, a, 1.0)
+b = 1.0
+goals = TuckerGoals(scaler, _goals, weights)
+gotcha = GotchaObjective(Xs, scaler, goals, a, b)
 
 problem = rolm.GoatedRolModel(gotcha, us0)
 problem.solve()
