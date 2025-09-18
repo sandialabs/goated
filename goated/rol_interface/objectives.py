@@ -1,9 +1,17 @@
 import numpy as np
+import pydoc
 
-import pyrol
-from goated.rol_interface.vectors import TuckerVector, CPVector
+
+from goated.rol_interface.vectors import TuckerVector, CPVector, vector_copy, vector_distance
 from goated.cp import CPObjective
 from goated.tucker import TuckerObjective
+from typing import Optional, TypeAlias
+import inspect as ins
+
+from pyrol.getTypeName import getTypeName2 as pyrol_types
+UpdateType : TypeAlias = pyrol_types('UpdateType') # type: ignore
+Objective  : TypeAlias = pyrol_types('Objective')  # type: ignore
+Vector     : TypeAlias = pyrol_types('Vector')     # type: ignore
 
 from tqdm import tqdm
 
@@ -21,55 +29,95 @@ def dask_parallel_eval(callable, iterable, num_workers=4):
     return results
 
 
+class TrustRegionObjective(Objective):
+    """
+    pyrol.Objective is an alias for pyrol.pyrol.ROL.Objective_FSsolver_double_t
+    """
 
-
-class GoatedRolObjective(pyrol.Objective):
-
-    def __init__(self, objective : TuckerObjective | CPObjective, precondition: bool):
+    def __init__(self, *args, **kwargs):
         super().__init__()
+        self.debug = kwargs.get('debug', True)
+        self._last_x    : Optional[Vector]     = None
+        self._last_ut   : Optional[UpdateType] = None
+        self._last_iter : int = 0
+
+    def debug_check_x_unchanged(self, x: Vector) -> bool:
+        if self.debug:
+            return (self._last_x is None) or (vector_distance(self._last_x, x) == 0)
+        return True
+    
+    def update(self, x, ut : UpdateType, iter: int) -> None:
+        self._last_x    = vector_copy(x)
+        self._last_ut   = ut
+        self._last_iter = iter
+
+    def value(self, x, tol) -> float:
+        assert(self.debug_check_x_unchanged(x))
+        return 0.0
+
+    def gradient(self, g, x, tol) -> None:
+        assert(self.debug_check_x_unchanged(x))
+
+    def hessVec(self, hv, v, x, tol) -> None:
+        assert(self.debug_check_x_unchanged(x))
+
+    def precond(self, pv, v, x, tol) -> None:
+        assert(self.debug_check_x_unchanged(x))
+
+
+class GoatedRolObjective(TrustRegionObjective):
+
+    def __init__(self, objective : TuckerObjective | CPObjective, precondition: bool, debug: bool=True):
         if isinstance(objective, TuckerObjective):
             self._rolvector_type = TuckerVector
         elif isinstance(objective, CPObjective):
             self._rolvector_type = CPVector
         else:
             raise ValueError()
-        self._objective = objective
+        self._our_objective = objective
         self._precondition = precondition
+        TrustRegionObjective.__init__(self, debug=debug)
 
-    def update(self, x, update_type, iter):
-        x = x.to_tensor()
-        self._objective.update(x)
+    def update(self, x, ut : UpdateType, iter: int):
+        x_ten = x.to_tensor()
+        self._our_objective.update(x_ten)
+        TrustRegionObjective.update(self, x, ut, iter)
 
     def value(self, x, tol):
-        return self._objective.value()
+        TrustRegionObjective.value(self, x, tol)
+        return self._our_objective.value()
 
     def gradient(self, g, x, tol):
+        TrustRegionObjective.gradient(self, g, x, tol)
         x = x.to_tensor()
-        temp = self._objective.gradient(x)
+        temp = self._our_objective.gradient(x)
         temp = self._rolvector_type.from_tensor(temp)
         g.set(temp)
 
     def hessVec(self, hv, v, x, tol):
+        TrustRegionObjective.hessVec(self, hv, v, x, tol)
         x = x.to_tensor()
         v = v.to_tensor()
-        temp = self._objective.hessvec(x,v)
+        temp = self._our_objective.hessvec(x,v)
         temp = self._rolvector_type.from_tensor(temp)
         hv.set(temp)
 
     def precond(self, pv, v, x, tol):
+        TrustRegionObjective.precond(self, pv, v, x, tol)
         if not self._precondition:
             pv.set(v)
             return
         x = x.to_tensor()
         v = v.to_tensor()
-        temp = self._objective.precvec(x,v)
+        temp = self._our_objective.precvec(x,v)
         temp = self._rolvector_type.from_tensor(temp)
         pv.set(temp)
 
     def compute_hessian(self, x, parallel=False):
         n = x.dimension()
-        self.update(x,[],[])
         hv = x.clone()
+        last_x = vector_copy(self._last_x)
+        self.update(x, self._last_ut, self._last_iter)
         def run(i):
             v = x.basis(i)
             self.hessVec(hv,v,x,0.0)
@@ -82,13 +130,15 @@ class GoatedRolObjective(pyrol.Objective):
         H = np.zeros((n,n))
         for i,v in enumerate(results):
             H[:,i] = v
+        self.update(last_x, self._last_ut, self._last_iter)
         return H
     
     def compute_hessian_and_precond_hessian(self, x, parallel=False):
         n = x.dimension()
-        self.update(x,[],[])
         hv = x.clone()
         pv = x.clone()
+        last_x = vector_copy(self._last_x)
+        self.update(x, self._last_ut, self._last_iter)
         def run(i):
             v = x.basis(i)
             self.hessVec(hv,v,x,0.0)
@@ -105,4 +155,5 @@ class GoatedRolObjective(pyrol.Objective):
         for i,(u,v) in enumerate(results):
             H[:,i]    = u
             Hpre[:,i] = v
+        self.update(last_x, self._last_ut, self._last_iter)
         return H, Hpre

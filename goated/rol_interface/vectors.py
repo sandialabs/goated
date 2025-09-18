@@ -15,6 +15,20 @@ import pyrol
 from pyrol.pyrol import ROL
 
 
+def vector_copy(x: pyrol.Vector):
+    c = x.clone()
+    c.zero()
+    c.axpy(1.0, x)
+    return c
+
+
+def vector_distance(x: pyrol.Vector, y: pyrol.Vector) -> float:
+    z = vector_copy(x)
+    z.axpy(-1.0, y)
+    norm = z.norm()
+    return norm
+
+
 class TuckerVector(pyrol.Vector):
 
     @staticmethod
