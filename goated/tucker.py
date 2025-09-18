@@ -16,11 +16,12 @@ class TuckerObjective:
         self._shape : Tuple[int,...] = X.shape
         self._ndims : int = len(self._shape)
         self.Z : List[tensor] = []
+        self.M : ttensor = ttensor()
+        self._grad : ttensor = ttensor()
         self.times = defaultdict(list)
-        self.recompute_hess = True
         self.recompute_prec = True
 
-    def full(self, M):
+    def full(self, M) -> tensor:
         # Same as M.full(), except saves the intermediate tensors
         ZZ = M.core.ttm(M.factor_matrices[0],0)
         self.Z = [ ZZ ]
@@ -29,59 +30,73 @@ class TuckerObjective:
             self.Z.append(ZZ)
         return ZZ
 
-    def update(self, M):
+    def update(self, M, recompute_prec=True, recompute_grad=True) -> None:
+        self.M = M
         self.Mf = self.full(M)
-
-        # compute intermediate tenmats used in gradient() and hessvec
+        # compute intermediate tenmats used in gradient and hessvec
         self.Zt = [ M.core.to_tenmat(np.array([0])).data.T ]
         for i in range(1,self._ndims):
             self.Zt.append(self.Z[i-1].to_tenmat(np.array([i])).data.T)
-
         # whether we need to recompute point data in hessian/preconditioner
-        self.recompute_hess = True
-        self.recompute_prec = True
+        if recompute_grad:
+            self.recompute_grad()
+        if recompute_prec:
+            self.recompute_bd_prec()
+        return
 
-    def value(self):
-        Y = self.Mf-self.X
+    def value(self) -> float:
+        Y = self.Mf - self.X
         F = (Y.norm()**2)/self.s
         return F
+    
+    def _eric_names_this(self) -> tensor:
+        Zb = (2/self.s)*(self.Mf-self.X)
+        return Zb
 
-    def gradient(self, M):
+    def recompute_grad(self, Zb: Optional[tensor] = None) -> None:
+        M = self.M
         tic = _time.time()
-        Y = (2/self.s)*(self.Mf-self.X)
+        Zb = self._eric_names_this()
         Gf = [np.empty(())]*self._ndims
-        Zb = Y
         for i in reversed(range(self._ndims)):
             Gf[i] = Zb.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zb = Zb.ttm(M.factor_matrices[i].T,i)
         G = ttensor(Zb, Gf)
         toc = _time.time()
-        self.times['gradient'].append(toc - tic)
-        return G
+        self.times['recompute_grad'].append(toc - tic)
+        self._grad = G
+        return
 
-    def hessvec(self, M, V):
-        tic = _time.time()
-        # Form tangent of reconstructed tensor
+    def gradient(self) -> ttensor:
+        return self._grad
+    
+    def _tangent_reconstructed_tensor(self, V, rescale=True) -> tensor:
+        M = self.M
         Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
         for i in range(1, self._ndims):
             Zd = self.Z[i-1].ttm(V.factor_matrices[i],i) + Zd.ttm(M.factor_matrices[i],i)
+        if rescale:
+            return (2/self.s)*Zd
+        else:
+            return Zd
 
-        # compute Gauss-Newton Hessian-vector product
-        Zbd = (2/self.s)*Zd
-        Hv = [np.empty(())]*self._ndims
+    def hessvec(self, V) -> ttensor:
+        M = self.M
+        tic = _time.time()
+        Zbd = self._tangent_reconstructed_tensor(V)
+        Hv = [np.empty(())] * self._ndims
         for i in reversed(range(self._ndims)):
-            Hv[i]= Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
+            Hv[i] = Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zbd = Zbd.ttm(M.factor_matrices[i].T,i)
         Hv = ttensor(Zbd, Hv)
-
-        self.recompute_hess = False
         toc = _time.time()
         self.times['gn_hessvec'].append(toc - tic)
         return Hv
 
-    def recompute_bd_prec(self, M):
+    def recompute_bd_prec(self):
         tic = _time.time()
         n = self._ndims
+        M = self.M
         grams = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(n)]
         self.C = []
         for k in range(n):
@@ -101,10 +116,7 @@ class TuckerObjective:
         self.times['recompute_bd_prec'].append(toc - tic)
         return
 
-    def precvec(self, M, V):
-        if self.recompute_prec:
-            self.recompute_bd_prec(M)
-        
+    def precvec(self, V):        
         tic = _time.time()
         Pv = []
         for k in range(self._ndims):
@@ -135,35 +147,55 @@ class TuckerGoals:
         if weights is None:
             weights = np.ones((len(self.goals),))
         self.weights = weights
-        self.Mfs : ktensor = None  # type: ignore
+        self.M   : Optional[ttensor] = None
+        self.Mfs : tensor = tensor()
         self._shape : Tuple[int,...] = goals[0].domain_shape
         self._ndim  : int = len(self._shape)
-        self.recompute_hess = True
+        self._grad : ttensor = ttensor()
         self.DEBUG = False
         
-    def update(self, Mfs : ktensor):
+    def update(self, Mfs : tensor, recompute_grad=True, recompute_jacs: bool=True, jac_times: Optional[list]=None, M: Optional[ttensor]=None) -> None:
         self.Mfs = Mfs
-        self.recompute_hess = True
+        if recompute_jacs:
+            if jac_times is None:
+                jac_times = []
+            self.recompute_jacs(jac_times)
+        if recompute_grad:
+            self.recompute_grad()
+        self.M = M # only needed in gn_diag_block_goal_updates.
+        return
+    
+    def recompute_jacs(self, jac_times: list):
+        for _,g in zip(self.weights, self.goals):
+            ticc = _time.time()
+            val, jac = g.computeTarget(self.Mfs, compute_deriv=True)
+            tocc = _time.time()
+            jac_times.append(tocc - ticc)
+            g.val = val
+            g.jac = jac
+            # ^ That caches the goal's value and Jacobian for future use.
+        return
 
     def value(self):
         F = 0.0
         for w,g in zip(self.weights, self.goals):
             F += w * g.computeValue(self.Mfs)
         return F
-
-    def gradient(self):
-        # Goal terms
+    
+    def recompute_grad(self) -> None:
         Yg = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
             Yg += w * g.computeDeriv(self.Mfs)
         Yg = tensor(Yg)
         Yg = self.scaler.unscale_tensor(Yg, shift=False)
-        return Yg
+        self._grad = Yg
+        return
+
+    def gradient(self):
+        return self._grad
     
-    def hessvec(self, Md, recomp_times=None):
+    def hessvec(self, Md: tensor):
         # compute necessary gradient info
-        if recomp_times is None:
-            recomp_times = []
         Yd = np.zeros(self._shape, order='F')
         for w,g in zip(self.weights, self.goals):
             var = g.var
@@ -173,16 +205,8 @@ class TuckerGoals:
             if not isinstance(var, np.ndarray):
                 var = np.array(var)
             num_time = len(time)
-            if self.recompute_hess:
-                ticc = _time.time()
-                val, jac = g.computeTarget(self.Mfs, compute_deriv=True)
-                tocc = _time.time()
-                recomp_times.append(tocc - ticc)
-                g.val = val
-                g.jac = jac
-            val = g.val
             jac = g.jac
-             
+
             # compute val_dot (could tangent-differentiate fcn, but since we already have jac, we just do a mat-vec)
             jact = jac[:,:,:,time]
             Mdt  = Md[:,:,:,time]
@@ -209,10 +233,13 @@ class TuckerGoals:
 
             Yd += w*jac_dot
         Yd = self.scaler.unscale_tensor(Yd, shift=False)
-        self.recompute_hess = False
         return Yd
 
-    def gn_diag_block_goal_updates(self, M, parent_b):
+    def gn_diag_block_goal_updates(self, parent_b: float):
+        if self.M is None:
+            raise ValueError()
+        M = self.M
+        assert M is not None
         tic = _time.time()
         factor_cols = [[] for _ in range(self._ndim + 1)]
         for w, g in zip(self.weights, self.goals):
@@ -270,76 +297,50 @@ class GotchaObjective(TuckerObjective):
 
     def __init__(self, X, scaler, goals : TuckerGoals, a, b, jacobi=True):
         super().__init__(X, s=1.0)
-        self.scaler = scaler
+        self.scaler = scaler # Why not inherit self.scaler from goals.scaler ?
         self.goals = goals
         self.a = a
         self.b = b
         self.jacobi = jacobi
         self.block_jacobi_ops_cache = []
-        
-    def update(self, M):
-        super().update(M)
+
+    def update(self, M, recompute_prec=True, recompute_grad=True):
+        super().update(M, recompute_grad=False, recompute_prec=False)
         self.Mfs = self.scaler.unscale_tensor(self.Mf)
-        self.goals.update(self.Mfs)
+        jac_times = []
+        self.goals.update(self.Mfs, recompute_grad=True, recompute_jacs=True, jac_times=jac_times, M=M)
+        self.times['recompute hessian'].extend(jac_times)
+        if recompute_grad:
+            self.recompute_grad()
+        if recompute_prec:
+            if self.jacobi:
+                self.recompute_bj_prec()
+            else:
+                self.recompute_bd_prec()
+        return
         
     def value(self):
         F  = self.a * super().value()
         F += self.b * self.goals.value()
         return F
     
-    def gradient(self, M):
-        tic = _time.time()
-        # Initialize with goal terms
+    def _eric_names_this(self) -> tensor:
         Yg = self.goals.gradient()
-        # Accumulate tensor terms
-        Y = self.Mf-self.X
-        Gf = [np.empty(())]*self._ndims
+        Y = self.Mf - self.X
         Zb = (2*self.a)*Y + self.b*Yg
-        for i in range(self._ndims - 1, -1, -1):
-            Gf[i] = Zb.to_tenmat(np.array([i])).data @ self.Zt[i]
-            Zb = Zb.ttm(M.factor_matrices[i].T,i)
-        G = ttensor(Zb, Gf)
-        toc = _time.time()
-        self.times['gradient'].append(toc - tic)
-        return G
-    
-    def hessvec(self, M, V):
-        tic = _time.time()
-        # Form tangent of reconstructed tensor
-        Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
-        for i in range(1, self._ndims):
-            Zd = self.Z[i-1].ttm(V.factor_matrices[i],i) + Zd.ttm(M.factor_matrices[i],i)
+        return Zb
+
+    def _tangent_reconstructed_tensor(self, V) -> tensor:
+        Zd = super()._tangent_reconstructed_tensor(V, rescale=False)
         Md = tensor(Zd.data)
-        Md = self.scaler.unscale_tensor(Md, shift=False)
-        Md = Md.data
-
-        recomp_times = []
-        Yd = self.goals.hessvec(Md, recomp_times)
-
-        # compute Gauss-Newton Hessian-vector product
+        Md = self.scaler.unscale_tensor(Md, shift=False).data
+        Yd = self.goals.hessvec(Md)
         Zbd = (2*self.a)*Zd + self.b*Yd
-        Hv = [np.empty(())] * self._ndims
-        for i in reversed(range(self._ndims)):
-            Hv[i] = Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
-            Zbd = Zbd.ttm(M.factor_matrices[i].T,i)
-        Hv = ttensor(Zbd, Hv)
+        return Zbd
 
-        self.recompute_hess = False
-        toc = _time.time()
-        recomp_hess_time = sum(recomp_times)
-        self.times['recompute hessian'].extend(recomp_times)
-        self.times['gn_hessvec, marginal'].append(toc - tic - recomp_hess_time)
-        return Hv
-    
-    def recompute_bd_prec(self, M):
-        if self.jacobi:
-            self.recompute_bj_prec(M)
-        else:
-            super().recompute_bd_prec(M)
-        return
-
-    def recompute_bj_prec(self, M):
-        goal_panels, t = self.goals.gn_diag_block_goal_updates(M, self.b)
+    def recompute_bj_prec(self):
+        M = self.M
+        goal_panels, t = self.goals.gn_diag_block_goal_updates(self.b)
         self.times['gn_diag_block_goal_updates'].append(t)
         tic = _time.time()
         n = self._ndims
@@ -369,7 +370,7 @@ class GotchaObjective(TuckerObjective):
         # 
         S = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(self._ndims)]
         C = []
-        goal_updates, _ = self.goals.gn_diag_block_goal_updates(M, self.b)
+        goal_updates, _ = self.goals.gn_diag_block_goal_updates(self.b)
 
         for n in range(self._ndims):
             D = np.array([1])

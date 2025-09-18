@@ -4,7 +4,7 @@ import pydoc
 
 from goated.rol_interface.vectors import TuckerVector, CPVector, vector_copy, vector_distance
 from goated.cp import CPObjective
-from goated.tucker import TuckerObjective
+from goated.tucker import TuckerObjective, GotchaObjective
 from typing import Optional, TypeAlias
 import inspect as ins
 
@@ -67,20 +67,22 @@ class TrustRegionObjective(Objective):
 
 class GoatedRolObjective(TrustRegionObjective):
 
-    def __init__(self, objective : TuckerObjective | CPObjective, precondition: bool, debug: bool=True):
-        if isinstance(objective, TuckerObjective):
-            self._rolvector_type = TuckerVector
-        elif isinstance(objective, CPObjective):
-            self._rolvector_type = CPVector
-        else:
-            raise ValueError()
+    def __init__(self, objective : GotchaObjective, precondition: bool, debug: bool=True):
+        # if isinstance(objective, TuckerObjective):
+        self._rolvector_type = TuckerVector
+        # elif isinstance(objective, CPObjective):
+        #     self._rolvector_type = CPVector
+        # else:
+        #     raise ValueError()
         self._our_objective = objective
-        self._precondition = precondition
+        self._precondition  = precondition
         TrustRegionObjective.__init__(self, debug=debug)
 
     def update(self, x, ut : UpdateType, iter: int):
         x_ten = x.to_tensor()
-        self._our_objective.update(x_ten)
+        self._our_objective.update(
+            x_ten, recompute_prec=self._precondition, recompute_grad=True
+        )
         TrustRegionObjective.update(self, x, ut, iter)
 
     def value(self, x, tol):
@@ -89,16 +91,14 @@ class GoatedRolObjective(TrustRegionObjective):
 
     def gradient(self, g, x, tol):
         TrustRegionObjective.gradient(self, g, x, tol)
-        x = x.to_tensor()
-        temp = self._our_objective.gradient(x)
+        temp = self._our_objective.gradient()
         temp = self._rolvector_type.from_tensor(temp)
         g.set(temp)
 
     def hessVec(self, hv, v, x, tol):
         TrustRegionObjective.hessVec(self, hv, v, x, tol)
-        x = x.to_tensor()
         v = v.to_tensor()
-        temp = self._our_objective.hessvec(x,v)
+        temp = self._our_objective.hessvec(v)
         temp = self._rolvector_type.from_tensor(temp)
         hv.set(temp)
 
@@ -107,9 +107,8 @@ class GoatedRolObjective(TrustRegionObjective):
         if not self._precondition:
             pv.set(v)
             return
-        x = x.to_tensor()
         v = v.to_tensor()
-        temp = self._our_objective.precvec(x,v)
+        temp = self._our_objective.precvec(v)
         temp = self._rolvector_type.from_tensor(temp)
         pv.set(temp)
 
