@@ -68,12 +68,12 @@ class TrustRegionObjective(Objective):
 class GoatedRolObjective(TrustRegionObjective):
 
     def __init__(self, objective : GotchaObjective, precondition: bool, debug: bool=True):
-        # if isinstance(objective, TuckerObjective):
-        self._rolvector_type = TuckerVector
-        # elif isinstance(objective, CPObjective):
-        #     self._rolvector_type = CPVector
-        # else:
-        #     raise ValueError()
+        if isinstance(objective, TuckerObjective):
+            self._rolvector_type = TuckerVector
+        elif isinstance(objective, CPObjective):
+            self._rolvector_type = CPVector
+        else:
+            raise ValueError()
         self._our_objective = objective
         self._precondition  = precondition
         TrustRegionObjective.__init__(self, debug=debug)
@@ -81,7 +81,7 @@ class GoatedRolObjective(TrustRegionObjective):
     def update(self, x, ut : UpdateType, iter: int):
         x_ten = x.to_tensor()
         self._our_objective.update(
-            x_ten, recompute_prec=self._precondition, recompute_grad=True
+            x_ten, prec=self._precondition, grad=True
         )
         TrustRegionObjective.update(self, x, ut, iter)
 

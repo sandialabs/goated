@@ -13,45 +13,57 @@ class CPObjective:
         self.Mf : Optional[tensor] = None
         self._shape : Tuple[int,...] = X.shape
         self._ndims : int = len(self._shape)
+        self._grad : ktensor = ktensor()
 
-    def update(self, M):
+    def update(self, M, prec=True, grad=True, hess=True) -> None:
+        self.M = M
         self.Mf = M.full()
+        if hess:
+            self.recompute_hess()
+        if prec:
+            self.recompute_prec()
+        if grad:
+            self.recompute_grad()
+        return
+    
+    def recompute_hess(self) -> None:
+        d = self._ndims
+        A = self.M.factor_matrices
+        r = A[0].shape[1]
+        #  Compute gram matrices
+        S = [A[k].T @ A[k] for k in range(d)]
+        # diagonal factors
+        self.U = np.ones((d,r,r))
+        for k in range(d):
+            for h in range(d):
+                if h != k:
+                    self.U[k,:,:] *= S[h]
+        # off-diagonal factors
+        self.Ub = np.ones((d,d,r,r))
+        for k in range(d):
+            for l in range(d):
+                for h in range(d):
+                    if h != l and h != k:
+                        self.Ub[k,l,:,:] *= S[h]
+        return
         
-    def value(self):
+    def value(self) -> float:
         Y = self.Mf-self.X
         F = (Y.norm()**2)/self.s
         return F
     
-    def gradient(self, M):
-        Y = (2/self.s)*(self.Mf-self.X)
-        G = Y.mttkrps(M)
-        # ^ Why not use self.Mf, or store self.M?
-        self.recompute_hess = True
-        self.recompute_prec = True
-        return G
+    def recompute_grad(self) -> None:
+        Y : tensor = (2/self.s)*(self.Mf-self.X)
+        G = ktensor(Y.mttkrps(self.M))
+        self._grad = G
+
+    def gradient(self) -> ktensor:
+        return self._grad
     
-    def hessvec(self, M, V):
+    def hessvec(self, V) -> ktensor:
         d = self._ndims
-        A = M.factor_matrices
+        A = self.M.factor_matrices
         r = A[0].shape[1]
-
-        if self.recompute_hess:
-            #  Compute gram matrices
-            S = [A[k].T @ A[k] for k in range(d)]
-            # diagonal factors
-            self.U = np.ones((d,r,r))
-            for k in range(d):
-                for h in range(d):
-                    if h != k:
-                        self.U[k,:,:] *= S[h]
-            # off-diagonal factors
-            self.Ub = np.ones((d,d,r,r))
-            for k in range(d):
-                for l in range(d):
-                    for h in range(d):
-                        if h != l and h != k:
-                            self.Ub[k,l,:,:] *= S[h]
-
         Ab = V.factor_matrices
         Sb = [Ab[k].T @ A[k] for k in range(d)]
         Hv = []
@@ -61,30 +73,29 @@ class CPObjective:
             for l in range(d):
                 if l != k:
                     Ukb += self.Ub[k,l,:,:]*Sb[l]
-
             # Gauss-Newton Hessian-vector product
             Hv.append((2/self.s) * (Ab[k] @ self.U[k] + A[k] @ Ukb))
-
-        self.recompute_hess = False
+        Hv = ktensor(Hv)
         return Hv
     
-    def precvec(self, M, V):
+    def recompute_prec(self):
         d = self._ndims
+        A = self.M.factor_matrices
+        r = A[0].shape[1]
+        #  Compute gram matrices
+        S = [A[k].T @ A[k] for k in range(d)]
+        # diagonal factors
+        self.U = np.ones((d,r,r))
+        for k in range(d):
+            for h in range(d):
+                if h != k:
+                    self.U[k,:,:] *= S[h]
+        # cholesky factors
+        self.Vc = [la.cholesky(self.U[k,:,:], lower=False) for k in range(d)]
+        return
 
-        if self.recompute_prec:
-            A = M.factor_matrices
-            r = A[0].shape[1]
-            #  Compute gram matrices
-            S = [A[k].T@A[k] for k in range(d)]
-            # diagonal factors
-            self.U = np.ones((d,r,r))
-            for k in range(d):
-                for h in range(d):
-                    if h != k:
-                        self.U[k,:,:] *= S[h]
-            # cholesky factors
-            self.Vc = [la.cholesky(self.U[k,:,:], lower=False) for k in range(d)]
-
+    def precvec(self, V) -> ktensor:
+        d = self._ndims
         #  Gauss-Newton block diagonal preconditioner
         Ab = V.factor_matrices
         Pv = []
@@ -93,39 +104,50 @@ class CPObjective:
             tmp = la.solve_triangular(self.Vc[k], tmp, trans='N', overwrite_b=True)
             Pv.append((self.s/2)*tmp.T)
         Pv = ktensor(Pv)
-        self.recompute_prec = False
         return Pv
-    
+
 
 class CPGoals:
 
-    def __init__(self, scaler, goals : List[Goal], weights : Optional[Sequence[float]] = None):
+    def __init__(self, scaler, goals : List[Goal], weights : Optional[Sequence[float] | np.ndarray] = None):
         assert len(goals) > 0
         self.scaler = scaler
         self.goals = goals
         if weights is None:
-            weights = np.ones((len(goals),), dtype=float)  # type: ignore
-        self.weights = weights
-        self.Mf : tensor  = None  # type: ignore
-        self.Ms : ktensor = None  # type: ignore
+            weights = np.ones((len(goals),), dtype=float)
+        elif not isinstance(weights, np.ndarray):
+            weights = np.array(weights)
+        self.weights : np.ndarray = weights
+        self.Mf : tensor  = tensor()
+        self.Ms : ktensor = ktensor()
         self._shape : Tuple[int,...] = goals[0].domain_shape
         self._ndim  : int = len(self._shape)
-        self.recompute_hess = True
+        self._grad  : ktensor = ktensor()
         
-    def update(self, M : ktensor):
+    def update(self, M : ktensor, grad=True, recompute_jacs=True):
         self.Mf = self.scaler.unscale_tensor(M.full())
         self.Ms = self.scaler.unscale_ktensor(M)
         assert self.Mf.shape == self._shape
         assert self.Ms.shape == self._shape
-        self.recompute_hess = True
-        
-    def value(self):
+        if grad:
+            self.recompute_grad()
+        if recompute_jacs:
+            self.recompute_jacs()
+
+    def recompute_jacs(self) -> None:
+        for _,g in zip(self.weights,self.goals):
+            val, jac = g.computeTarget(self.Mf, compute_deriv=True)
+            g.val = val
+            g.jac = jac
+        return
+
+    def value(self) -> float:
         F = 0
         for w,g in zip(self.weights, self.goals):
             F += w * g.computeValue(self.Mf)
         return F
     
-    def gradient(self):
+    def recompute_grad(self) -> None:
         Y = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
             Y += w * g.computeDeriv(self.Mf)
@@ -133,10 +155,12 @@ class CPGoals:
         V = Y.mttkrps(self.Ms)
         V = ktensor(V)
         V = self.scaler.unscale_ktensor(V)
-        self.recompute_hess = True
-        return V
-    
-    def hessvec(self, V):
+        self._grad = V
+
+    def gradient(self) -> ktensor:
+        return self._grad
+
+    def hessvec(self, V: ktensor) -> ktensor:
         # Compute unscaled data if we were provided scaling
         Vs = self.scaler.unscale_ktensor(V)
 
@@ -159,11 +183,6 @@ class CPGoals:
             var = g.var
             time = g.time
             num_time = len(time)
-            if self.recompute_hess:
-                val, jac = g.computeTarget(self.Mf, compute_deriv=True) # type: ignore
-                g.val = val
-                g.jac = jac
-            val = g.val
             jac = g.jac
                 
             # compute val_dot (could tangent-differentiate fcn, but since we already have jac, we just do a mat-vec)
@@ -186,8 +205,6 @@ class CPGoals:
 
         # transform back to scaled variables
         Hv = self.scaler.unscale_ktensor(ktensor(Hv))
-
-        self.recompute_hess = False
         return Hv
 
     def eval_goals(self, U: tensor, scaled=False):   
@@ -210,30 +227,32 @@ class GocchaObjective(CPObjective):
         self.a = a
         self.b = b
         
-    def update(self, M):
-        super().update(M)
+    def update(self, M, grad=True, prec=True, hess=True):
+        super().update(M, prec=prec, grad=False, hess=hess)
         self.goals.update(M)
+        if grad:
+            self.recompute_grad()
         
-    def value(self):
+    def value(self) -> float:
         F  = self.a * super().value()
         F += self.b * self.goals.value()
         return F
     
-    def gradient(self, M):
-        G = super().gradient(M)
-        # ^ That sets self.recompute_hess = self.recompute_prec = True.
+    def recompute_grad(self):
+        super().recompute_grad()
+        G = self._grad.factor_matrices
         Ggoal = self.goals.gradient()
         G = [self.a*G[i]+self.b*Ggoal.factor_matrices[i] for i in range(self._ndims)]
         G = ktensor(G)
-        return G
+        self._grad = G
     
-    def hessvec(self, M, V):
-        Hv = super().hessvec(M,V)
-        HvGoal = self.goals.hessvec(V)
-        Hv = [self.a*Hv[i]+self.b*HvGoal.factor_matrices[i] for i in range(self._ndims)]
+    def hessvec(self, V):
+        HvFrob_factors = super().hessvec(V).factor_matrices
+        HvGoal_factors = self.goals.hessvec(V).factor_matrices
+        Hv = [self.a*F + self.b*G for (F,G) in zip(HvFrob_factors, HvGoal_factors)]
         Hv = ktensor(Hv)
         return Hv
     
-    def precvec(self, M, V):
-        Pv = super().precvec(M,V)
+    def precvec(self, V):
+        Pv = super().precvec(V)
         return Pv

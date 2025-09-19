@@ -19,7 +19,6 @@ class TuckerObjective:
         self.M : ttensor = ttensor()
         self._grad : ttensor = ttensor()
         self.times = defaultdict(list)
-        self.recompute_prec = True
 
     def full(self, M) -> tensor:
         # Same as M.full(), except saves the intermediate tensors
@@ -30,7 +29,7 @@ class TuckerObjective:
             self.Z.append(ZZ)
         return ZZ
 
-    def update(self, M, recompute_prec=True, recompute_grad=True) -> None:
+    def update(self, M, prec=True, grad=True) -> None:
         self.M = M
         self.Mf = self.full(M)
         # compute intermediate tenmats used in gradient and hessvec
@@ -38,9 +37,9 @@ class TuckerObjective:
         for i in range(1,self._ndims):
             self.Zt.append(self.Z[i-1].to_tenmat(np.array([i])).data.T)
         # whether we need to recompute point data in hessian/preconditioner
-        if recompute_grad:
+        if grad:
             self.recompute_grad()
-        if recompute_prec:
+        if prec:
             self.recompute_bd_prec()
         return
 
@@ -53,7 +52,7 @@ class TuckerObjective:
         Zb = (2/self.s)*(self.Mf-self.X)
         return Zb
 
-    def recompute_grad(self, Zb: Optional[tensor] = None) -> None:
+    def recompute_grad(self) -> None:
         M = self.M
         tic = _time.time()
         Zb = self._eric_names_this()
@@ -133,7 +132,6 @@ class TuckerObjective:
         Pvc = self.C[-1] @ Pvc
         Pvc = Pvc.reshape(V.core.shape, order='F')
         Pv  = ttensor(tensor(Pvc), Pv)
-        self.recompute_prec = False
         toc = _time.time()
         self.times['gn_bd_precvec'].append(toc - tic)
         return Pv
@@ -154,13 +152,13 @@ class TuckerGoals:
         self._grad : ttensor = ttensor()
         self.DEBUG = False
         
-    def update(self, Mfs : tensor, recompute_grad=True, recompute_jacs: bool=True, jac_times: Optional[list]=None, M: Optional[ttensor]=None) -> None:
+    def update(self, Mfs : tensor, grad=True, recompute_jacs: bool=True, jac_times: Optional[list]=None, M: Optional[ttensor]=None) -> None:
         self.Mfs = Mfs
         if recompute_jacs:
             if jac_times is None:
                 jac_times = []
             self.recompute_jacs(jac_times)
-        if recompute_grad:
+        if grad:
             self.recompute_grad()
         self.M = M # only needed in gn_diag_block_goal_updates.
         return
@@ -191,10 +189,10 @@ class TuckerGoals:
         self._grad = Yg
         return
 
-    def gradient(self):
+    def gradient(self) -> ttensor:
         return self._grad
     
-    def hessvec(self, Md: tensor):
+    def hessvec(self, Md: tensor) -> tensor:
         # compute necessary gradient info
         Yd = np.zeros(self._shape, order='F')
         for w,g in zip(self.weights, self.goals):
@@ -216,7 +214,7 @@ class TuckerGoals:
                 vd = np.zeros((num_time,))
                 for i in range(num_time):
                     vd[i] = np.reshape(jac[:,:,var,time[i]],(1,-1),order='F') @ np.reshape(Md[:,:,var,time[i]],(-1,1),order='F')
-                
+
             # compute dot gradient tensor dF/dM(i,j,v,t)
             jac_dot = np.zeros(jac.shape)
             mask_t = np.zeros(jac.shape, dtype=bool)
@@ -304,15 +302,15 @@ class GotchaObjective(TuckerObjective):
         self.jacobi = jacobi
         self.block_jacobi_ops_cache = []
 
-    def update(self, M, recompute_prec=True, recompute_grad=True):
-        super().update(M, recompute_grad=False, recompute_prec=False)
+    def update(self, M, prec=True, grad=True):
+        super().update(M, grad=False, prec=False)
         self.Mfs = self.scaler.unscale_tensor(self.Mf)
         jac_times = []
-        self.goals.update(self.Mfs, recompute_grad=True, recompute_jacs=True, jac_times=jac_times, M=M)
+        self.goals.update(self.Mfs, grad=True, recompute_jacs=True, jac_times=jac_times, M=M)
         self.times['recompute hessian'].extend(jac_times)
-        if recompute_grad:
+        if grad:
             self.recompute_grad()
-        if recompute_prec:
+        if prec:
             if self.jacobi:
                 self.recompute_bj_prec()
             else:
