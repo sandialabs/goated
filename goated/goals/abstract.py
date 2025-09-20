@@ -8,6 +8,10 @@ Tensor : TypeAlias = tensor | ttensor | ktensor
 class Goal:
 
     def __init__(self, X : Tensor, var, time):
+        if not isinstance(var, np.ndarray):
+            var = np.array(var)
+        if not isinstance(time, np.ndarray):
+            time = np.array(time)
         self.var = var
         self.time = time
         self.target, _ = self.computeTarget(X)

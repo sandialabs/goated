@@ -1,4 +1,4 @@
-from pyttb import tensor, ttensor, ktensor  # type: ignore
+from pyttb import tensor, ktensor  # type: ignore
 import numpy as np
 import scipy.linalg as la
 from goated.goals.abstract import Goal
@@ -124,14 +124,14 @@ class CPGoals:
         self._ndim  : int = len(self._shape)
         self._grad  : ktensor = ktensor()
         
-    def update(self, M : ktensor, grad=True, recompute_jacs=True):
+    def update(self, M : ktensor, grad=True, jacs=True):
         self.Mf = self.scaler.unscale_tensor(M.full())
         self.Ms = self.scaler.unscale_ktensor(M)
         assert self.Mf.shape == self._shape
         assert self.Ms.shape == self._shape
         if grad:
             self.recompute_grad()
-        if recompute_jacs:
+        if jacs:
             self.recompute_jacs()
 
     def recompute_jacs(self) -> None:

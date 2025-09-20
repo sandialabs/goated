@@ -1,4 +1,4 @@
-from pyttb import tensor, ttensor, ktensor  # type: ignore
+from pyttb import tensor, ttensor # type: ignore
 import numpy as np
 
 import goated.utils.linops as linops
@@ -15,8 +15,10 @@ class TuckerObjective:
         self.s = s if s is not None else  self.X.norm()**2
         self._shape : Tuple[int,...] = X.shape
         self._ndims : int = len(self._shape)
-        self.Z : List[tensor] = []
-        self.M : ttensor = ttensor()
+        self.Z  : List[tensor]     = []
+        self.Zt : List[np.ndarray] = []
+        self.M  : ttensor = ttensor()
+        self.Mf : tensor  = tensor()
         self._grad : ttensor = ttensor()
         self.times = defaultdict(list)
 
@@ -40,7 +42,7 @@ class TuckerObjective:
         if grad:
             self.recompute_grad()
         if prec:
-            self.recompute_bd_prec()
+            self.recompute_prec()
         return
 
     def value(self) -> float:
@@ -56,7 +58,8 @@ class TuckerObjective:
         M = self.M
         tic = _time.time()
         Zb = self._eric_names_this()
-        Gf = [np.empty(())]*self._ndims
+        Gf : list[np.ndarray] = [None] * self._ndims # type: ignore
+        # ^ We need to reserve space for Gf since we fill it in reverse order.
         for i in reversed(range(self._ndims)):
             Gf[i] = Zb.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zb = Zb.ttm(M.factor_matrices[i].T,i)
@@ -92,7 +95,7 @@ class TuckerObjective:
         self.times['gn_hessvec'].append(toc - tic)
         return Hv
 
-    def recompute_bd_prec(self):
+    def recompute_prec(self):
         tic = _time.time()
         n = self._ndims
         M = self.M
@@ -145,33 +148,34 @@ class TuckerGoals:
         if weights is None:
             weights = np.ones((len(self.goals),))
         self.weights = weights
-        self.M   : Optional[ttensor] = None
-        self.Mfs : tensor = tensor()
+        self.M   : ttensor = ttensor()
+        self.Mfs : tensor  = tensor()
         self._shape : Tuple[int,...] = goals[0].domain_shape
         self._ndim  : int = len(self._shape)
-        self._grad : ttensor = ttensor()
+        self._grad  : ttensor = ttensor()
+        self._diag_hess_factors : list[np.ndarray] = []
+        self.jac_times : list[float] = []
         self.DEBUG = False
         
-    def update(self, Mfs : tensor, grad=True, recompute_jacs: bool=True, jac_times: Optional[list]=None, M: Optional[ttensor]=None) -> None:
+    def update(self, M: ttensor, Mfs: tensor, grad=True, jacs: bool=True, prec=True) -> None:
+        self.M = M
         self.Mfs = Mfs
-        if recompute_jacs:
-            if jac_times is None:
-                jac_times = []
-            self.recompute_jacs(jac_times)
+        if grad or jacs or prec:
+            self.recompute_jacs()
         if grad:
             self.recompute_grad()
-        self.M = M # only needed in gn_diag_block_goal_updates.
+            # ^ That needs to come after recompute_jacs().
         return
     
-    def recompute_jacs(self, jac_times: list):
+    def recompute_jacs(self):
         for _,g in zip(self.weights, self.goals):
-            ticc = _time.time()
+            tic = _time.time()
             val, jac = g.computeTarget(self.Mfs, compute_deriv=True)
-            tocc = _time.time()
-            jac_times.append(tocc - ticc)
             g.val = val
             g.jac = jac
             # ^ That caches the goal's value and Jacobian for future use.
+            toc = _time.time()
+            self.jac_times.append(toc - tic)
         return
 
     def value(self):
@@ -196,29 +200,24 @@ class TuckerGoals:
         # compute necessary gradient info
         Yd = np.zeros(self._shape, order='F')
         for w,g in zip(self.weights, self.goals):
-            var = g.var
+            jac  = g.jac
+            var  = g.var
             time = g.time
-            if not isinstance(time, np.ndarray):
-                time = np.array(time)
-            if not isinstance(var, np.ndarray):
-                var = np.array(var)
-            num_time = len(time)
-            jac = g.jac
 
             # compute val_dot (could tangent-differentiate fcn, but since we already have jac, we just do a mat-vec)
             jact = jac[:,:,:,time]
             Mdt  = Md[:,:,:,time]
-            val_dot = np.zeros((num_time,))
+            val_dot = np.zeros((time.size,))
             val_dot[:] = np.einsum('hijk,hijk->k', jact[:,:,var,:], Mdt[:,:,var,:])
             if self.DEBUG:
-                vd = np.zeros((num_time,))
-                for i in range(num_time):
+                vd = np.zeros((time.size,))
+                for i in range(time.size):
                     vd[i] = np.reshape(jac[:,:,var,time[i]],(1,-1),order='F') @ np.reshape(Md[:,:,var,time[i]],(-1,1),order='F')
 
             # compute dot gradient tensor dF/dM(i,j,v,t)
             jac_dot = np.zeros(jac.shape)
-            mask_t = np.zeros(jac.shape, dtype=bool)
-            mask_v = np.zeros(jac.shape, dtype=bool)
+            mask_t  = np.zeros(jac.shape, dtype=bool)
+            mask_v  = np.zeros(jac.shape, dtype=bool)
             mask_t[:,:,:,time] = True
             mask_v[:,:,var,:]  = True 
             ro = 'C'  # doesn't matter, just be explicit.
@@ -226,29 +225,24 @@ class TuckerGoals:
             jac_dot.ravel(order=ro)[mask] = (2*val_dot[None,None,:]*jact[:,:,var,:]).ravel(order=ro)
             if self.DEBUG:
                 jd = np.zeros(jac.shape)
-                for i in range(num_time):
+                for i in range(time.size):
                     jd[:,:,var,time[i]] = 2*val_dot[i]*jac[:,:,var,time[i]]
 
             Yd += w*jac_dot
         Yd = self.scaler.unscale_tensor(Yd, shift=False)
         return Yd
 
-    def gn_diag_block_goal_updates(self, parent_b: float):
-        if self.M is None:
-            raise ValueError()
+    def gn_diag_block_goal_updates(self):
         M = self.M
-        assert M is not None
-        tic = _time.time()
         factor_cols = [[] for _ in range(self._ndim + 1)]
         for w, g in zip(self.weights, self.goals):
-            goal_scale = np.sqrt(2 *parent_b * w)
+            goal_scale = np.sqrt(2 * w)
             time = g.time
-            _, jac = g.computeTarget(self.Mfs, compute_deriv=True)
+            jac  = g.jac
             jac_mat_shape = self._shape[0:self._ndim-1] + (1,)
             for t in time:
                 jac_t = tensor(jac[:,:,:,t], shape=jac_mat_shape, copy=False)
                 jac_t = self.scaler.unscale_tensor(jac_t, shift=False)
-
                 for n in range(self._ndim):
                     mats, dims = [], []
                     for i in range(self._ndim):
@@ -276,8 +270,7 @@ class TuckerGoals:
                 factor_cols[-1].append(D)
 
         factors = [np.column_stack(cols) for cols in factor_cols]
-        toc = _time.time()
-        return factors, toc - tic
+        return factors
 
     def eval_goals(self, U: tensor, scaled=False):   
         if scaled:
@@ -306,15 +299,18 @@ class GotchaObjective(TuckerObjective):
         super().update(M, grad=False, prec=False)
         self.Mfs = self.scaler.unscale_tensor(self.Mf)
         jac_times = []
-        self.goals.update(self.Mfs, grad=True, recompute_jacs=True, jac_times=jac_times, M=M)
+        self.goals.update(self.M, self.Mfs, grad=True, jacs=True)
         self.times['recompute hessian'].extend(jac_times)
         if grad:
-            self.recompute_grad()
+            super().recompute_grad()
+            # ^ That function does something with the output of 
+            #   self._eric_names_this(), which has a meaningful 
+            #   implementation.
         if prec:
             if self.jacobi:
-                self.recompute_bj_prec()
+                self.recompute_prec()
             else:
-                self.recompute_bd_prec()
+                super().recompute_prec()
         return
         
     def value(self):
@@ -323,6 +319,7 @@ class GotchaObjective(TuckerObjective):
         return F
     
     def _eric_names_this(self) -> tensor:
+        # This is called in self.recompute_grad().
         Yg = self.goals.gradient()
         Y = self.Mf - self.X
         Zb = (2*self.a)*Y + self.b*Yg
@@ -336,11 +333,13 @@ class GotchaObjective(TuckerObjective):
         Zbd = (2*self.a)*Zd + self.b*Yd
         return Zbd
 
-    def recompute_bj_prec(self):
+    def recompute_prec(self):
         M = self.M
-        goal_panels, t = self.goals.gn_diag_block_goal_updates(self.b)
-        self.times['gn_diag_block_goal_updates'].append(t)
         tic = _time.time()
+        goal_panels = self.goals.gn_diag_block_goal_updates()
+        goal_panels[0] *= np.sqrt(self.b)
+        toc = _time.time()
+        self.times['gn_diag_block_goal_updates'].append(toc - tic)
         n = self._ndims
         grams = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(n)]
         self.C = []
@@ -357,8 +356,8 @@ class GotchaObjective(TuckerObjective):
         kron_args = grams[::-1]
         B = linops.InvUpdatedKronPosDef(kron_args, goal_panels[-1])
         self.C.append(B)
-        toc = _time.time()
-        self.times['recompute_bj_prec, marginal'].append(toc - tic)
+        tic = _time.time()
+        self.times['recompute_bj_prec, marginal'].append(tic - toc)
         self.block_jacobi_ops_cache.append([op for op in self.C])
         return
 
@@ -368,7 +367,7 @@ class GotchaObjective(TuckerObjective):
         # 
         S = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(self._ndims)]
         C = []
-        goal_updates, _ = self.goals.gn_diag_block_goal_updates(self.b)
+        goal_updates = self.goals.gn_diag_block_goal_updates()
 
         for n in range(self._ndims):
             D = np.array([1])
