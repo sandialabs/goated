@@ -1,3 +1,10 @@
+"""
+Routines for extracting and comparing physics "quantities of interest" (momentum, various energies, etc.)
+from full-order and reduced-order simulation data, using spatial integrals supplied by an ExoInfo instance.
+These functions are used in goal-oriented tensor-decomposition workflows (see "Goal-Oriented Low-Rank Tensor
+Decompositions..." D. Dunlavy et al., 2025).
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 from goated.goals.abstract import PhysicsGoal

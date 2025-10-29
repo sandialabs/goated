@@ -50,14 +50,14 @@ class TuckerObjective:
         F = (Y.norm()**2)/self.s
         return F
     
-    def _eric_names_this(self) -> tensor:
+    def _deriv_wrt_reconstructed_tensor(self) -> tensor:
         Zb = (2/self.s)*(self.Mf-self.X)
         return Zb
 
     def recompute_grad(self) -> None:
         M = self.M
         tic = _time.time()
-        Zb = self._eric_names_this()
+        Zb = self._deriv_wrt_reconstructed_tensor()
         Gf : list[np.ndarray] = [None] * self._ndims # type: ignore
         # ^ We need to reserve space for Gf since we fill it in reverse order.
         for i in reversed(range(self._ndims)):
@@ -188,6 +188,9 @@ class TuckerGoals:
         Yg = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
             Yg += w * g.computeDeriv(self.Mfs)
+            # ^ I think that line is only a correct implementation because of weird decisions
+            #   about how computeDeriv works.
+            #
         Yg = tensor(Yg)
         Yg = self.scaler.unscale_tensor(Yg, shift=False)
         self._grad = Yg
@@ -304,7 +307,7 @@ class GotchaObjective(TuckerObjective):
         if grad:
             super().recompute_grad()
             # ^ That function does something with the output of 
-            #   self._eric_names_this(), which has a meaningful 
+            #   self._deriv_wrt_reconstructed_tensor(), which has a meaningful 
             #   implementation.
         if prec:
             if self.jacobi:
@@ -318,8 +321,10 @@ class GotchaObjective(TuckerObjective):
         F += self.b * self.goals.value()
         return F
     
-    def _eric_names_this(self) -> tensor:
+    def _deriv_wrt_reconstructed_tensor(self) -> tensor:
         # This is called in self.recompute_grad().
+        # It's the total derivative of the loss function w.r.t. the reconstructed
+        # tensor.
         Yg = self.goals.gradient()
         Y = self.Mf - self.X
         Zb = (2*self.a)*Y + self.b*Yg

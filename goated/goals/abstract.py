@@ -7,6 +7,7 @@ Tensor : TypeAlias = tensor | ttensor | ktensor
 
 
 class Goal:
+    # Abstract class. All implementations currently go through PhysicsGoal, defined below.
 
     def __init__(self, ground_truth : Tensor) -> None:
         self.target, _ = self.computeTarget(ground_truth, compute_deriv=False)
@@ -14,20 +15,12 @@ class Goal:
         return
     
     def computeTarget(self, U : Tensor, compute_deriv=False) -> Tuple[float, np.ndarray]:
-        # Abstract function to be implemented in derived classes
         raise NotImplementedError()
     
-    def computeValue(self, U : Tensor):
-        val, _ = self.computeTarget(U, compute_deriv=False)
-        diff = val - self.target  # type: ignore
-        F = np.linalg.norm(diff)**2
-        return F
+    def computeValue(self, U : Tensor) -> np.floating:
+        raise NotImplementedError()
 
-    def computeDeriv(self, U : Tensor):
-        val, jac = self.computeTarget(U, compute_deriv=True)
-        diff = val - self.target  # type: ignore
-        # jac[self._grad_indices] *= 2*np.reshape(diff, (1,1,1) + self.target.shape)
-        # return jac
+    def computeDeriv(self, U : Tensor) -> np.ndarray:
         raise NotImplementedError()
 
 
