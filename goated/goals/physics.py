@@ -1,58 +1,169 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from goated.goals.abstract import Goal
+from goated.goals.abstract import PhysicsGoal
+from goated.utils.exo import ExoInfo
 from typing import Tuple
 
 
-def compute_momentum(X, var, time, exo, compute_deriv=False) -> Tuple[float, np.ndarray]:
+def set_docstring(docstr):
+    def assign(fn):
+        fn.__doc__ = docstr
+        return fn
+    return assign
+
+
+DOCSTRING_TEMPLATE_COMPUTE = \
+"""
+Compute COMPUTE_SUB.
+
+Parameters
+----------
+X : ttb.ktensor or ndarray of shape (nx, ny[, nz], nvar, ntime)
+    Full or reduced data tensor.
+
+var : sequence of int
+    VAR_SUB in the variable-mode of X.
+
+time : sequence of int
+    Time-step indices at which to evaluate the integral.
+
+exo : ExoInfo
+    Provides quadrature weights and mappings for spatial integration.
+
+compute_deriv : bool, default=False
+    If True, also compute derivative w.r.t. X.
+
+Returns
+-------
+p : ndarray of length len(time)
+    OUTPUT_SUB
+
+jac : ndarray or empty
+    If compute_deriv is True, then this is the Jacobian ∂p/∂X of shape
+    (nx,ny[,nz],nvar,ntime); otherwise an empty array.
+"""
+
+
+@set_docstring(
+    DOCSTRING_TEMPLATE_COMPUTE\
+    .replace( 'COMPUTE_SUB',
+        'the L₂-norm of the momentum field over space at each time' )\
+    .replace( 'VAR_SUB',
+        'Indices of the momentum components (m₁, m₂[, m₃]) in the variable-mode of X' )\
+    .replace( 'OUTPUT_SUB',
+        '√(∑|momentum|²) at each time (L₂-norm)' )
+)
+def compute_momentum(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.floating, np.ndarray]:
     func = lambda v: np.sum(v**2,axis=2)
     deriv = lambda v: 2.0*v
-    out = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
+    p, jac = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
     if compute_deriv:
-        p = out[0]
-        jac = out[1]
         p = np.sqrt(p)
         jac[np.ix_(range(jac.shape[0]),range(jac.shape[1]),var,time)] *= 0.5/np.reshape(p,(1,1,1,len(time)))
         return p,jac
     else:
-        return np.sqrt(out), np.empty(())
+        return np.sqrt(p), np.empty(())
 
 
-def compute_internal_energy(X, var, time, exo, compute_deriv=False) -> Tuple[float, np.ndarray]:
+
+@set_docstring(
+    DOCSTRING_TEMPLATE_COMPUTE\
+    .replace( 'COMPUTE_SUB',
+        'the spatial integral of internal energy (density × temperature) at each time' )\
+    .replace( 'VAR_SUB',
+        'Indices of the density and temperature components (ρ, T) in the variable-mode of X' )\
+    .replace( 'OUTPUT_SUB',
+        'Spatial integral of ρ·T at each time' )
+)
+def compute_internal_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.floating, np.ndarray]:
     func = lambda v: np.prod(v,axis=2)
     deriv = lambda v: v[:,:,[1,0],:]
-    out = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
+    p, jac = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
     if compute_deriv:
-        return out
+        return (p, jac)
     else:
-        return out, np.empty(())
+        return p, np.empty(())
 
 
-def compute_magnetic_energy(X, var, time, exo, compute_deriv=False) -> Tuple[float, np.ndarray]:
+@set_docstring(
+    DOCSTRING_TEMPLATE_COMPUTE\
+    .replace( 'COMPUTE_SUB',
+        'the spatial integral of magnetic energy ½·∑|B|² at each time' )\
+    .replace( 'VAR_SUB',
+        'Indices of the magnetic field components (B₁, B₂[, B₃]) in the variable-mode of X' )\
+    .replace( 'OUTPUT_SUB',
+        'Spatial integral of ½·∑|B|² at each time' )
+)
+def compute_magnetic_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.floating, np.ndarray]:
     func = lambda v: 0.5*np.sum(v**2,axis=2)
     deriv = lambda v: v
     out = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
     if compute_deriv:
-        return out
+        return out[0], out[1]
     else:
-        return out, np.empty(())
+        return out[0], np.empty(())
 
 
-def compute_kinetic_energy(X, var, time, exo, compute_deriv=False) -> Tuple[float, np.ndarray]:
+
+@set_docstring(
+    DOCSTRING_TEMPLATE_COMPUTE\
+    .replace( 'COMPUTE_SUB',
+       'the spatial integral of kinetic energy ½·|m|²/ρ at each time')\
+    .replace( 'VAR_SUB',
+        'Indices of the density and momentum components (ρ, m₁, m₂[, m₃])')\
+    .replace( 'OUTPUT_SUB',
+       'Spatial integral of kinetic energy at each time.')
+)
+def compute_kinetic_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.floating, np.ndarray]:
     func = lambda v: 0.5*np.sum(v[:,:,1:,:]**2,axis=2)/v[:,:,0,:]
     def deriv(v):
         J = np.zeros(v.shape)
         J[:,:,0,:] = -0.5*np.sum(v[:,:,1:,:]**2,axis=2)/v[:,:,0,:]**2
         J[:,:,1:,:] = v[:,:,1:,:] / np.reshape(v[:,:,0,:],(J.shape[0],J.shape[1],1,J.shape[3]))
         return J
-    out = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
+    p, jac = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
     if compute_deriv:
-        return out
+        return (p, jac)
     else:
-        return out, np.empty(())
+        return p, np.empty(())
 
 
-def compute_total_energy(X, var, time, exo, compute_deriv=False) -> Tuple[float, np.ndarray]:
+def compute_total_energy(X, var, time, exo, compute_deriv=False) -> Tuple[np.floating, np.ndarray]:
+    """
+    Compute the spatial integral of total energy (internal + kinetic + magnetic).
+
+    Parameters
+    ----------
+    X : ttb.ktensor or ndarray of shape (nx, ny[, nz], nvar, ntime)
+        Full or reduced data tensor.  Must be
+        • 4-way: (nx, ny,   nvar=6, ntime) for a 2D simulation, or
+        • 5-way: (nx, ny, nz, nvar=8, ntime) for a 3D simulation.
+        The ‘variable’ mode must contain exactly:
+          [B₁, B₂(, B₃), ρ, m₁, m₂(, m₃), T]
+        in that order (so nvar=6 when num_space=2, nvar=8 when num_space=3).
+
+    var : sequence of int
+        Indices selecting the above variables in X's variable-mode.
+
+    time : sequence of int
+        Time-step indices at which to evaluate each integral.
+
+    exo : ExoInfo
+        Provides quadrature weights and mappings for spatial integration.
+
+    compute_deriv : bool, default=False
+        If True, also compute the Jacobian of the total-energy integral
+        with respect to X.
+
+    Returns
+    -------
+    E : ndarray of length len(time)
+        Total energy integral (E = internal + kinetic + magnetic) at each time.
+
+    J : ndarray or empty
+        If compute_deriv is True, the Jacobian ∂E/∂X of shape
+        (nx, ny[, nz], nvar, ntime); otherwise an empty array.
+    """
     num_space = X.ndims - 2
     if num_space == 2:
         B_var = var[0:2]
@@ -64,6 +175,8 @@ def compute_total_energy(X, var, time, exo, compute_deriv=False) -> Tuple[float,
         rho_var = [var[3]]
         mom_var = var[4:7]
         T_var = [var[7]]
+    else:
+        raise ValueError()
 
     if compute_deriv:
         T, J_T = compute_internal_energy(X,    rho_var + T_var, time, exo, compute_deriv=True)
@@ -158,7 +271,7 @@ def plot_energies(X,u,rho_var,T_var,mom_var,B_var,time_ind,time_val,exo,scaler):
     return fig,axs
     
 
-class MomentumGoal(Goal):
+class MomentumGoal(PhysicsGoal):
     def __init__(self, X, var, time, exo):
         self.exo = exo
         super().__init__(X, var, time)
@@ -167,7 +280,7 @@ class MomentumGoal(Goal):
         return compute_momentum(U,self.var,self.time,self.exo,compute_deriv)
 
 
-class InternalEnergyGoal(Goal):
+class InternalEnergyGoal(PhysicsGoal):
     def __init__(self, X, var, time, exo):
         self.exo = exo
         super().__init__(X, var, time)
@@ -176,7 +289,7 @@ class InternalEnergyGoal(Goal):
         return compute_internal_energy(U,self.var,self.time,self.exo,compute_deriv)
 
 
-class MagneticEnergyGoal(Goal):
+class MagneticEnergyGoal(PhysicsGoal):
     def __init__(self, X, var, time, exo):
         self.exo = exo
         super().__init__(X, var, time)
@@ -185,7 +298,7 @@ class MagneticEnergyGoal(Goal):
         return compute_magnetic_energy(U,self.var,self.time,self.exo,compute_deriv)
 
 
-class KineticEnergyGoal(Goal):
+class KineticEnergyGoal(PhysicsGoal):
     def __init__(self, X, var, time, exo):
         self.exo = exo
         super().__init__(X, var, time)
@@ -194,7 +307,7 @@ class KineticEnergyGoal(Goal):
         return compute_kinetic_energy(U,self.var,self.time,self.exo,compute_deriv)
 
 
-class TotalEnergyGoal(Goal):
+class TotalEnergyGoal(PhysicsGoal):
     def __init__(self, X, var, time, exo):
         self.exo = exo
         super().__init__(X, var, time)

@@ -1,5 +1,6 @@
 import numpy as np
 import math
+ 
 
 class ExoInfo:
         
@@ -128,11 +129,11 @@ class ExoInfo:
         J = np.linalg.det(A@np.column_stack((x,y)))
         return J
     
-    def compute_spatial_integral(self, X, var, time, func=None, deriv=None, compute_func=True, compute_deriv=False):
+    def compute_spatial_integral(self, X, var, time, func=None, deriv=None, compute_func=True, compute_deriv=False) -> tuple[np.floating, np.ndarray]:
         import pyttb as ttb
 
-        if isinstance(X,ttb.ktensor):
-            Xf = X.full(X).double()
+        if isinstance(X, ttb.ktensor):
+            Xf = X.full().double()
         else:
             Xf = X.double()
         num_elem = self.elem_ind.shape[0]
@@ -144,6 +145,9 @@ class ExoInfo:
         assert num_dim == 2 or num_dim == 3
         nx = Xf.shape[0]
         ny = Xf.shape[1]
+
+        p = np.nan
+        jac = np.empty(())
 
         # get nodal values for each element
         I = self.tensor_linear_ind
@@ -157,7 +161,7 @@ class ExoInfo:
         if compute_func:
             f = func(v) # evaluate functional
             w_det_J1 = np.tile(np.reshape(self.w_det_J,(num_qp_per_elem,num_elem,1),order='F'),(1,1,num_time)) # compute element transformation weights
-            p = np.sum(w_det_J1*f,(0,1)) # compute integral
+            p : np.floating = np.sum(w_det_J1*f,(0,1)) # compute integral
 
         # compute gradient tensor
         if compute_deriv:
@@ -168,18 +172,17 @@ class ExoInfo:
             dpdu = np.reshape(dpdu,(num_node_per_elem,num_elem,num_var,num_time),order='F')
 
             # scatter element jacobians into gradient tensor
+
+            #
+            #   This is the gradient of what function ???
+            #
             jac = np.zeros((nx*ny,Xf.shape[2],Xf.shape[3]),order='F')
             for e in range(num_elem):
                 ti = self.tensor_elem_linear_ind[e,:]
                 jac[np.ix_(ti,var,time)] += np.squeeze(dpdu[:,e,:,:])
             jac = np.reshape(jac,Xf.shape,order='F')
 
-        if compute_func and compute_deriv:
-            return p,jac
-        elif compute_func:
-            return p
-        elif compute_deriv:
-            return jac
+        return p, jac
         
     def write_sheet(self, X, vars, fname, template_fname):
         import netCDF4 as nc
