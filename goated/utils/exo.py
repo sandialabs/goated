@@ -3,8 +3,63 @@ import math
  
 
 class ExoInfo:
+    """
+    Read an Exodus-style NetCDF file and assemble spatial integration info
+    for CFD/FE data on a planar slice.
+
+    After read_sheet() is called, the following attributes are available:
+
+    x_coord       (ndarray of shape (num_selected_nodes,))  
+    y_coord       (ndarray of shape (num_selected_nodes,))  
+    z_coord       (ndarray of shape (num_selected_nodes,))  
+    x             (ndarray of unique x-coordinates of the slice)  
+    y             (ndarray of unique y-coordinates of the slice)  
+    z             (ndarray; a singleton array equal to the requested z_slice)  
+    t             (ndarray of time values)  
+    tensor_data   (ndarray of shape (nx, ny, num_nod_var, num_time))  
+    var_name      (list of str, length num_nod_var)  
+    node_ind      (ndarray of shape (num_selected_nodes, 3))  
+    tensor_node_ind (ndarray of shape (num_selected_nodes, 2))  
+    elem_ind      (ndarray of shape (num_elem, num_nodes_per_elem))  
+    w_det_J       (ndarray of shape (num_qp_per_elem, num_elem))  
+    linear_elem_ind (ndarray)  
+    node_linear_ind (ndarray)  
+    tensor_elem_linear_ind (ndarray of shape (num_elem, num_nodes_per_elem))  
+    A             (ndarray of shape (num_qp_per_elem, num_nodes_per_elem))  
+    gp            (ndarray of shape (num_qp_per_elem, 2))  
+
+    Methods
+    -------
+    read_sheet(file_name, z_slice=0.0)
+        Load an Exodus II file (NetCDF) and extract a z-slice into self.tensor_data.
+    setupIntegrationInfo()
+        Build all of the quadrature‐and‐index arrays needed for compute_spatial_integral.
+    compute_det_jac(x, y, z, gp)
+        Compute det(Jacobian) at one quadrature point.
+    compute_spatial_integral(X, var, time, func, deriv=None,
+                            compute_func=True, compute_deriv=False)
+        Perform finite‐element–style spatial integration of the functional `func`
+        (and optionally its derivative) across all elements.
+    write_sheet(X, vars, fname, template_fname)
+        Write a new Exodus II file by folding X back onto a template.
+    """
         
     def read_sheet(self, file_name, z_slice=0.0):
+        """
+        Read an Exodus II (NetCDF4) file and extract a planar slice at z = z_slice.
+
+        Parameters
+        ----------
+        file_name : str
+            Path to an Exodus II NetCDF file.
+        z_slice : float, optional
+            The z‐coordinate to slice on; only nodes exactly at this z will be selected.
+
+        Raises
+        ------
+        AssertionError
+            If no nodes are found at z == z_slice or if z‐mode size != 1 after slicing.
+        """
         import netCDF4 as nc
         
         # Read file
@@ -135,7 +190,7 @@ class ExoInfo:
         if isinstance(X, ttb.ktensor):
             Xf = X.full().double()
         else:
-            Xf = X.double()
+            Xf = X
         num_elem = self.elem_ind.shape[0]
         num_node_per_elem = self.elem_ind.shape[1]
         num_qp_per_elem = num_node_per_elem
@@ -147,7 +202,7 @@ class ExoInfo:
         ny = Xf.shape[1]
 
         p = np.nan
-        jac = np.empty(())
+        jac = np.empty((0,))
 
         # get nodal values for each element
         I = self.tensor_linear_ind
@@ -207,9 +262,17 @@ class ExoInfo:
             num_time = len(src.dimensions['time_step'])
             num_node = len(src.dimensions['num_nodes'])
             data = np.zeros((num_var, num_time, num_node))
-            for n in range(0,num_node):
-                data[:,:,n] = X[self.node_ind[n,0], self.node_ind[n,1], self.node_ind[n,2],:,:]
-
+            for n in range(num_node):
+                ix, iy, iz = self.node_ind[n]
+                if   X.ndim == 5:
+                    # X has shape (nx, ny, nz, nvar, ntime)
+                    data[:,:,n] = X[ix, iy, iz, :, :]
+                elif X.ndim == 4:
+                    # X has shape (nx, ny, nvar, ntime) -- drop the singleton z
+                    data[:,:,n] = X[ix, iy, :, :]
+                else:
+                    msg = f"Unexpected X.ndim={X.ndim} in write_sheet; must be 4 or 5."
+                    raise ValueError(msg)
             # write data to variables
             for i in range(num_var):
                 v = vars[i]
