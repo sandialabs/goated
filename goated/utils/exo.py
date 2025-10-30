@@ -1,64 +1,94 @@
 import numpy as np
+import pyttb as ttb
 import math
  
 
 class ExoInfo:
     """
-    Read an Exodus-style NetCDF file and assemble spatial integration info
-    for CFD/FE data on a planar slice.
+    Read and write Exodus-II (netCDF) “sheets,” extract a single-z planar slice of nodal data,
+    build finite-element quadrature tables, and perform spatial integrals (and their derivatives)
+    on those slices.
 
-    After read_sheet() is called, the following attributes are available:
+    Usage
+    -----
+    1. Instantiate:  exo = ExoInfo()
+    2. Read a slice: exo.read_sheet('foo.e', z_slice=0.0)
+         → populates:
+             x_coord    : (num_selected_nodes,)   float64
+             y_coord    : (num_selected_nodes,)   float64
+             z_coord    : (num_selected_nodes,)   float64  (all equal to z_slice)
+             x, y, z    : 1D arrays of the unique slice coordinates
+             t          : (num_time,)             float64
+             tensor_data: (nx, ny, num_vars, num_time) float64
+             var_name   : list[str]  of length num_vars
+             node_ind                : (num_selected_nodes, 3)    int (ix,iy,iz)
+             tensor_node_ind         : (num_selected_nodes, 2)    int (ix,iy)
+             elem_ind                : (num_elem, num_nodes_per_elem) int zero-based
+             A                        : (num_qp_per_elem, num_nodes_per_elem) float64
+             gp                       : (num_qp_per_elem, 2) float64
+             w_det_J                  : (num_qp_per_elem, num_elem) float64
+             linear_elem_ind          : (num_qp_per_elem * num_elem,) int
+             node_linear_ind          : (nx*ny,) int
+             tensor_elem_linear_ind   : (num_elem, num_nodes_per_elem) int
+    3. Call compute_spatial_integral(...) as many times as you like.
+    4. Optionally write back out via write_sheet(...).
 
-    x_coord       (ndarray of shape (num_selected_nodes,))  
-    y_coord       (ndarray of shape (num_selected_nodes,))  
-    z_coord       (ndarray of shape (num_selected_nodes,))  
-    x             (ndarray of unique x-coordinates of the slice)  
-    y             (ndarray of unique y-coordinates of the slice)  
-    z             (ndarray; a singleton array equal to the requested z_slice)  
-    t             (ndarray of time values)  
-    tensor_data   (ndarray of shape (nx, ny, num_nod_var, num_time))  
-    var_name      (list of str, length num_nod_var)  
-    node_ind      (ndarray of shape (num_selected_nodes, 3))  
-    tensor_node_ind (ndarray of shape (num_selected_nodes, 2))  
-    elem_ind      (ndarray of shape (num_elem, num_nodes_per_elem))  
-    w_det_J       (ndarray of shape (num_qp_per_elem, num_elem))  
-    linear_elem_ind (ndarray)  
-    node_linear_ind (ndarray)  
-    tensor_elem_linear_ind (ndarray of shape (num_elem, num_nodes_per_elem))  
-    A             (ndarray of shape (num_qp_per_elem, num_nodes_per_elem))  
-    gp            (ndarray of shape (num_qp_per_elem, 2))  
-
-    Methods
-    -------
-    read_sheet(file_name, z_slice=0.0)
-        Load an Exodus II file (NetCDF) and extract a z-slice into self.tensor_data.
-    setupIntegrationInfo()
-        Build all of the quadrature‐and‐index arrays needed for compute_spatial_integral.
-    compute_det_jac(x, y, z, gp)
-        Compute det(Jacobian) at one quadrature point.
-    compute_spatial_integral(X, var, time, func, deriv=None,
-                            compute_func=True, compute_deriv=False)
-        Perform finite‐element–style spatial integration of the functional `func`
-        (and optionally its derivative) across all elements.
-    write_sheet(X, vars, fname, template_fname)
-        Write a new Exodus II file by folding X back onto a template.
+    Attributes
+    ----------
+    x_coord : ndarray, shape (num_selected_nodes,)
+        Full list of x-coordinates for the nodes that lie exactly at z_slice.
+    y_coord : ndarray, shape (num_selected_nodes,)
+    z_coord : ndarray, shape (num_selected_nodes,)
+        Should all be equal to the requested z_slice.
+    x : ndarray, shape (nx,)
+        The unique sorted x-coordinates.
+    y : ndarray, shape (ny,)
+    z : ndarray, shape (1,)
+        Singleton array containing exactly [z_slice].
+    t : ndarray, shape (num_time,)
+        The time values from the “time_whole” variable.
+    tensor_data : ndarray, shape (nx, ny, num_vars, num_time)
+        The dense nodal data arranged as a full 4-D array.
+    var_name : list of str, length num_vars
+        The names of each nodal variable.
+    node_ind : ndarray, shape (num_selected_nodes,3)
+        The (ix,iy,iz) indices in the full (nx,ny,nz) grid for each selected node.
+    tensor_node_ind : ndarray, shape (num_selected_nodes,2)
+        The (ix,iy) indices into tensor_data for each selected node.
+    elem_ind : ndarray, shape (num_elem, num_nodes_per_elem)
+        Zero-based element connectivity arrays.
+    A : ndarray, shape (num_qp_per_elem, num_nodes_per_elem)
+        Shape-function values at each quadrature point.
+    gp : ndarray, shape (num_qp_per_elem,2)
+        Quadrature point coordinates in the reference square [-1,+1]^2.
+    w_det_J : ndarray, shape (num_qp_per_elem, num_elem)
+        Quadrature weights multiplied by |det(J)| for each element.
+    linear_elem_ind : ndarray, shape (num_qp_per_elem * num_elem,)
+        Flattened list of global node-indices (into node_linear_ind) for every qp+elem.
+    node_linear_ind : ndarray, shape (nx*ny,)
+        Maps 2-D tensor indices into a flat index for assembly.
+    tensor_elem_linear_ind : ndarray, shape (num_elem, num_nodes_per_elem)
+        For each element, the flat 1-D index of each corner node.
     """
+
         
     def read_sheet(self, file_name, z_slice=0.0):
         """
-        Read an Exodus II (NetCDF4) file and extract a planar slice at z = z_slice.
+        Load an Exodus-II (netCDF4) file and extract nodal data on the plane z == z_slice.
 
         Parameters
         ----------
         file_name : str
-            Path to an Exodus II NetCDF file.
+            Path to an Exodus-II netCDF file.
         z_slice : float, optional
-            The z‐coordinate to slice on; only nodes exactly at this z will be selected.
+            Which z-coordinate to extract.  Only nodes exactly at this z will
+            be included in the planar slice.
 
         Raises
         ------
         AssertionError
-            If no nodes are found at z == z_slice or if z‐mode size != 1 after slicing.
+            If no nodes are found at z == z_slice or if more than one distinct
+            z-value remains after slicing.
         """
         import netCDF4 as nc
         
@@ -94,9 +124,9 @@ class ExoInfo:
         assert num_z == 1 and self.z[0] == z_slice
 
         # build maps from coordinates to indices
-        x_map = dict(zip(self.x, np.arange(0,num_x)))
-        y_map = dict(zip(self.y, np.arange(0,num_y)))
-        z_map = dict(zip(self.z, np.arange(0,num_z)))
+        x_map = dict(zip(self.x, np.arange(num_x)))
+        y_map = dict(zip(self.y, np.arange(num_y)))
+        z_map = dict(zip(self.z, np.arange(num_z)))
         ix = np.array([x_map[v] for v in self.x_coord])
         iy = np.array([y_map[v] for v in self.y_coord])
         iz = np.array([z_map[v] for v in self.z_coord])
@@ -107,15 +137,15 @@ class ExoInfo:
 
         # read each nodal variable and store in tensor
         # this would be faster if we could assume an ordering for x,y,z
-        for v in range(0,num_var):
+        for v in range(num_var):
             var_name = 'vals_nod_var' + str(v+1)
             nodal_var = np.array(d.variables[var_name])
-            for n in range(0,num_node):
+            for n in range(num_node):
                 self.tensor_data[ix[n],iy[n],v,:] = nodal_var[:,valid_ind[n]]
 
         # read variable names
         tmp = np.array(d.variables['name_nod_var'])
-        self.var_name = [str(nc.chartostring(tmp[v,:])) for v in range(0,num_var)]
+        self.var_name = [str(nc.chartostring(tmp[v,:])) for v in range(num_var)]
 
         # node and connectivity info
         self.node_ind = np.column_stack((ix,iy,iz))
@@ -126,6 +156,42 @@ class ExoInfo:
         self.setupIntegrationInfo()
 
     def setupIntegrationInfo(self):
+        """
+        Build finite-element quadrature tables and index maps for a planar 2D quad mesh.
+
+        Preconditions
+        -------------
+        A prior call to `read_sheet(...)` must have succeeded, so that the following
+        attributes are defined on `self`:
+        
+        - self.x, self.y, self.z: 1D arrays of coordinates with len(self.z)==1  
+        - self.x_coord, self.y_coord, self.z_coord: full nodal coords on the slice  
+        - self.node_ind: array of shape (num_nodes, 3) giving (ix,iy,iz) per node  
+        - self.tensor_node_ind: array of shape (num_nodes, 2) giving (ix,iy) per node  
+        - self.elem_ind: array of shape (num_elem, 4) with zero-based quad connectivity  
+        
+        In other words, you must have a planar slice (constant z) and a quad mesh
+        (4-node bilinear elements) before calling this method.
+
+        Postconditions
+        --------------
+        The following attributes will be created or overwritten on `self`:
+
+        A : ndarray, shape (num_qp_per_elem, num_nodes_per_elem)
+            Values of the 4 bilinear shape functions at the 2-by-2 Gauss points.
+        gp : ndarray, shape (num_qp_per_elem, 2)
+            Reference quad coordinates (ξ,η) of the 2-by-2 Gauss points: [±1/√3].
+        linear_elem_ind : ndarray, shape (num_qp_per_elem * num_elem,)
+            Flattened global node-indices (into `node_linear_ind`) for each element & gp.
+        node_linear_ind : ndarray, shape (nx*ny,)
+            Maps each grid-node (ix,iy) into a single flat index (F-ordering).
+        tensor_elem_linear_ind : ndarray, shape (num_elem, num_nodes_per_elem)
+            For each quad element, the flat index of its 4 corner nodes.
+        w_det_J : ndarray, shape (num_qp_per_elem, num_elem)
+            Quadrature weight -by- |det(J)| at each (gp,element) for use in integration.
+        ind : ndarray, shape (num_qp_per_elem * num_elem,)
+            Inverse-index array for reassembling element-wise contributions.
+        """
 
         num_x = len(self.x)
         num_y = len(self.y)
@@ -153,7 +219,7 @@ class ExoInfo:
         num_node_per_elem = self.elem_ind.shape[1]
         num_qp_per_elem = num_node_per_elem
         self.tensor_elem_linear_ind = np.zeros((num_elem,num_node_per_elem),dtype=int)
-        for e in range(0,num_elem):
+        for e in range(num_elem):
             i = self.elem_ind[e,[0, 1, 3, 2]]
             ti = self.tensor_node_ind[i,:]
             self.tensor_elem_linear_ind[e,:] = np.ravel_multi_index((ti[:,0], ti[:,1]), (num_x, num_y), order='F')
@@ -166,14 +232,34 @@ class ExoInfo:
         yy = np.reshape(self.y_coord[self.linear_elem_ind], (num_qp_per_elem, num_elem), order='F')
         zz = np.reshape(self.z_coord[self.linear_elem_ind], (num_qp_per_elem, num_elem), order='F')
         self.w_det_J = np.zeros((num_qp_per_elem, num_elem))
-        for e in range(0,num_elem):
-            for j in range(0,num_qp_per_elem):
+        for e in range(num_elem):
+            for j in range(num_qp_per_elem):
                 self.w_det_J[j,e] = w[j]*self.compute_det_jac(xx[:,e], yy[:,e], zz[:,e], self.gp[j,:])
 
         # compute indices for summing jacobian contributions
-        unique_nodes,self.ind = np.unique(self.linear_elem_ind, return_inverse=True)
+        _, self.ind = np.unique(self.linear_elem_ind, return_inverse=True)
+        return
 
     def compute_det_jac(self, x, y, z, gp):
+        """
+        Compute the determinant of the Jacobian for one isoparametric quad.
+
+        Parameters
+        ----------
+        x : ndarray, shape (num_nodes_per_elem,)
+            Physical x-coordinates of the element's corner nodes.
+        y : ndarray, shape (num_nodes_per_elem,)
+            Physical y-coordinates of the corner nodes.
+        z : ndarray, shape (num_nodes_per_elem,)
+            Physical z-coordinates (unused for planar slice but passed through).
+        gp : ndarray, shape (2,)
+            The reference (ξ,η) quadrature point in [-1,1]^2.
+
+        Returns
+        -------
+        detJ : float
+            |det(dX/dξ)| for the mapping from reference square to physical element.
+        """
         
         omx = 0.5*(1-gp[0])
         opx = 0.5*(1+gp[0])
@@ -185,7 +271,50 @@ class ExoInfo:
         return J
     
     def compute_spatial_integral(self, X, var, time, func=None, deriv=None, compute_func=True, compute_deriv=False) -> tuple[np.floating, np.ndarray]:
-        import pyttb as ttb
+        """
+        Perform a finite-element-style spatial integral of a user-supplied functional
+        (and optionally its derivative) over the planar mesh.
+
+        Parameters
+        ----------
+        X : ndarray or ttb.ktensor
+            The nodal data array.  After slicing, this is expected to be
+            shape (nx,ny,num_vars,num_time).  If you pass a ktensor, it is
+            converted via `.full().double()`.
+        var : sequence of int
+            Indices along the variable-mode to include in the integral.
+        time : sequence of int
+            Indices along the time-mode to include in the integral.
+        func : callable
+            Called as `f = func(v)` where `v` is an array of shape
+            (num_qp, num_elem, num_vars, num_time) giving the pointwise
+            values at each quadrature point.  Must return an array `f` of
+            shape (num_qp, num_elem, num_time).
+        deriv : callable, optional
+            If `compute_deriv=True`, called as `g = deriv(v)` and must
+            return an array of shape (num_qp, num_elem, num_vars, num_time).
+        compute_func : bool, default=True
+            If True, evaluate and return the integral of `func`.
+        compute_deriv : bool, default=False
+            If True, also compute and return the assembled gradient tensor
+            `∂p/∂X`, of shape (nx,ny,num_vars,num_time).
+
+        Returns
+        -------
+        p : ndarray, shape (num_time,)
+            The time-series of the spatial integral ∫ func over the domain.
+        jac : ndarray
+            If `compute_deriv=False`, returns an empty array of shape (0,).
+            If `compute_deriv=True`, returns the gradient tensor of shape
+            (nx,ny,num_vars,num_time).
+
+        Raises
+        ------
+        AssertionError
+            If the element topology is not a quad (num_nodes_per_elem ∉ {4}).
+        ValueError
+            If `compute_deriv=True` but `deriv` is None.
+        """
 
         if isinstance(X, ttb.ktensor):
             Xf = X.full().double()
@@ -240,6 +369,29 @@ class ExoInfo:
         return p, jac
         
     def write_sheet(self, X, vars, fname, template_fname):
+        """
+        Write a new Exodus-II file by copying a template and overwriting the
+        nodal variable fields with data from `X`.
+
+        Parameters
+        ----------
+        X : ndarray, shape either (nx,ny,nvar,ntime) or (nx,ny,nz,nvar,ntime)
+            The full nodal data array to write out.
+        vars : sequence of int
+            The list of variable-mode indices in `X` corresponding to the
+            Exodus “vals_nod_var#” fields to overwrite.
+        fname : str
+            Path to the output netCDF file to create.
+        template_fname : str
+            Path to an existing Exodus-II file to use as a dimension/attribute
+            template.  All global attributes, dimensions, and variables
+            other than `vals_nod_var*` are copied verbatim.
+
+        Raises
+        ------
+        ValueError
+            If `X.ndim` is not 4 or 5.
+        """
         import netCDF4 as nc
         
         with nc.Dataset(template_fname,'r') as src, nc.Dataset(fname, 'w') as dst:
