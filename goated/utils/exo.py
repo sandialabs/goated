@@ -335,7 +335,7 @@ class ExoInfo:
 
         # get nodal values for each element
         I = self.tensor_linear_ind
-        Xff = np.reshape(Xf[np.ix_(range(nx),range(ny),var,time)],(nx*ny, num_var, num_time), order='F')
+        Xff = np.reshape(Xf.data[np.ix_(range(nx),range(ny),var,time)],(nx*ny, num_var, num_time), order='F')
         u = np.reshape(Xff[I,:,:],(num_node_per_elem, num_elem*num_var*num_time), order='F')
 
         # interpolate to quadrature points
