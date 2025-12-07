@@ -74,8 +74,9 @@ class GoatedRolModel:
         self._rol_params    = rol_params if rol_params is not None else self.default_rol_params()
         self._rol_objective = GoatedRolObjective(self.objective, precondition=precondition)
         self._rol_problem   = pyrol.Problem(self._rol_objective, self._rol_x, self._rol_g)
-        self._rol_solver    = pyrol.Solver(self._rol_problem, self._rol_params)
         stream = pyrol.getCout()
+        self._rol_problem.check(True, stream) # ?
+        self._rol_solver    = pyrol.Solver(self._rol_problem, self._rol_params)
         self._rol_solver.solve(stream)
         self._decomp = self._rol_x.to_tensor()
         return
