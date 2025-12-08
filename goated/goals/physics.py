@@ -171,15 +171,15 @@ def compute_total_energy(X, var, time, exo, compute_deriv=False) -> Tuple[np.nda
     """
     num_space = X.ndims - 2
     if num_space == 2:
-        B_var = var[0:2]
+        B_var   = var[0:2].tolist()
         rho_var = [var[2]]
-        mom_var = var[3:5]
-        T_var = [var[5]]
+        mom_var = var[3:5].tolist()
+        T_var   = [var[5]]
     elif num_space == 3:
-        B_var = var[0:3]
+        B_var   = var[0:3].tolist()
         rho_var = [var[3]]
-        mom_var = var[4:7]
-        T_var = [var[7]]
+        mom_var = var[4:7].tolist()
+        T_var   = [var[7]]
     else:
         raise ValueError()
 
