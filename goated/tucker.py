@@ -193,9 +193,6 @@ class TuckerGoals:
         Yg = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
             Yg += w * g.computeGrad(self.Mfs)
-            # ^ I think that line is only a correct implementation because of weird decisions
-            #   about how computeDeriv works.
-            #
         Yg = tensor(Yg)
         Yg = self.scaler.unscale_tensor(Yg, shift=False)
         self._grad = Yg
