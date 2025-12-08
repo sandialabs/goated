@@ -165,6 +165,7 @@ def test_goated_pipeline_synthetic(nx=5, ny=5, nvar=5, nt=5, rank_approx=1):
 
     pass
 
+
 def test_tucker_synthetic(nx=5, ny=5, nvar=5, nt=5, rank_approx=1):
     """
     Integration‐style smoke test: build a tiny synthetic 4‐way tensor,
