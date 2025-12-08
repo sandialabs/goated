@@ -60,7 +60,7 @@ jac : ndarray or empty
     .replace( 'OUTPUT_SUB',
         '√(∑|momentum|²) at each time (L₂-norm)' )
 )
-def compute_momentum(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.floating, np.ndarray]:
+def compute_momentum(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
     func = lambda v: np.sum(v**2,axis=2)
     deriv = lambda v: 2.0*v
     p, jac = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
@@ -81,7 +81,7 @@ def compute_momentum(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[n
     .replace( 'OUTPUT_SUB',
         'Spatial integral of ρ·T at each time' )
 )
-def compute_internal_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.floating, np.ndarray]:
+def compute_internal_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
     func = lambda v: np.prod(v,axis=2)
     deriv = lambda v: v[:,:,[1,0],:]
     p, jac = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
@@ -100,7 +100,7 @@ def compute_internal_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> 
     .replace( 'OUTPUT_SUB',
         'Spatial integral of ½·∑|B|² at each time' )
 )
-def compute_magnetic_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.floating, np.ndarray]:
+def compute_magnetic_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
     func = lambda v: 0.5*np.sum(v**2,axis=2)
     deriv = lambda v: v
     out = exo.compute_spatial_integral(X, var, time, func=func, deriv=deriv, compute_func=True, compute_deriv=compute_deriv)
@@ -119,7 +119,7 @@ def compute_magnetic_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> 
     .replace( 'OUTPUT_SUB',
        'Spatial integral of kinetic energy at each time.')
 )
-def compute_kinetic_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.floating, np.ndarray]:
+def compute_kinetic_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
     func = lambda v: 0.5*np.sum(v[:,:,1:,:]**2,axis=2)/v[:,:,0,:]
     def deriv(v):
         J = np.zeros(v.shape)
@@ -133,7 +133,7 @@ def compute_kinetic_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> T
         return p, np.empty(())
 
 
-def compute_total_energy(X, var, time, exo, compute_deriv=False) -> Tuple[np.floating, np.ndarray]:
+def compute_total_energy(X, var, time, exo, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute the spatial integral of total energy (internal + kinetic + magnetic).
 
@@ -209,8 +209,8 @@ def plot_momentum(X,u,var,time_ind,time_val,exo,scaler):
     if time_ind is None:
         time_ind = range(X.shape[3])
     U = scaler.unscale_tensor(u.full())
-    mom_X = compute_momentum(X,var,time_ind,exo)
-    mom_U = compute_momentum(U,var,time_ind,exo)
+    mom_X, _ = compute_momentum(X,var,time_ind,exo)
+    mom_U, _ = compute_momentum(U,var,time_ind,exo)
     t = time_val[time_ind]
 
     plt.rc('font',weight='bold')
