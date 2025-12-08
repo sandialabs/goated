@@ -137,8 +137,8 @@ class CPGoals:
     def recompute_jacs(self) -> None:
         for _,g in zip(self.weights,self.goals):
             val, jac = g.computeVector(self.Mf, compute_deriv=True)
-            g.val = val
-            g.jac = jac
+            g.cached_vec = val
+            g.cached_jac = jac
         return
 
     def value(self) -> float:
@@ -183,7 +183,7 @@ class CPGoals:
             var = g.var
             time = g.time
             num_time = len(time)
-            jac = g.jac
+            jac = g.cached_jac
                 
             # compute val_dot (could tangent-differentiate fcn, but since we already have jac, we just do a mat-vec)
             val_dot = np.zeros((num_time,1))
