@@ -67,7 +67,7 @@ def compute_momentum(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[n
     if compute_deriv:
         p = np.sqrt(p)
         jac[np.ix_(range(jac.shape[0]),range(jac.shape[1]),var,time)] *= 0.5/np.reshape(p,(1,1,1,len(time)))
-        return p,jac
+        return p, jac
     else:
         return np.sqrt(p), np.empty(())
 
@@ -281,7 +281,7 @@ class MomentumGoal(PhysicsGoal):
         self.exo = exo
         super().__init__(X, var, time)
 
-    def computeTarget(self,U,compute_deriv=False):
+    def computeVector(self,U,compute_deriv=False):
         return compute_momentum(U,self.var,self.time,self.exo,compute_deriv)
 
 
@@ -290,7 +290,7 @@ class InternalEnergyGoal(PhysicsGoal):
         self.exo = exo
         super().__init__(X, var, time)
 
-    def computeTarget(self,U,compute_deriv=False):
+    def computeVector(self,U,compute_deriv=False):
         return compute_internal_energy(U,self.var,self.time,self.exo,compute_deriv)
 
 
@@ -299,7 +299,7 @@ class MagneticEnergyGoal(PhysicsGoal):
         self.exo = exo
         super().__init__(X, var, time)
 
-    def computeTarget(self,U,compute_deriv=False):
+    def computeVector(self,U,compute_deriv=False):
         return compute_magnetic_energy(U,self.var,self.time,self.exo,compute_deriv)
 
 
@@ -308,7 +308,7 @@ class KineticEnergyGoal(PhysicsGoal):
         self.exo = exo
         super().__init__(X, var, time)
 
-    def computeTarget(self,U,compute_deriv=False):
+    def computeVector(self,U,compute_deriv=False):
         return compute_kinetic_energy(U,self.var,self.time,self.exo,compute_deriv)
 
 
@@ -317,5 +317,5 @@ class TotalEnergyGoal(PhysicsGoal):
         self.exo = exo
         super().__init__(X, var, time)
 
-    def computeTarget(self,U,compute_deriv=False):
+    def computeVector(self,U,compute_deriv=False):
         return compute_total_energy(U,self.var,self.time,self.exo,compute_deriv)

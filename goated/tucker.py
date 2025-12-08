@@ -142,7 +142,7 @@ class TuckerObjective:
 
 class TuckerGoals:
 
-    def __init__(self, scaler, goals : List[Goal], weights : Optional[Sequence[float] | np.ndarray] = None):
+    def __init__(self, scaler, goals : List[Goal], weights : Optional[Sequence[float] | np.ndarray] = None, _shape=None):
         self.scaler = scaler
         self.goals = goals
         if weights is None:
@@ -150,12 +150,17 @@ class TuckerGoals:
         self.weights = weights
         self.M   : ttensor = ttensor()
         self.Mfs : tensor  = tensor()
-        self._shape : Tuple[int,...] = goals[0].domain_shape
+        if len(goals) > 0:
+            self._shape : Tuple[int,...] = goals[0].domain_shape
+        elif isinstance(_shape, tuple):
+            self._shape : Tuple[int,...] = _shape
+        else:
+            raise ValueError()
         self._ndim  : int = len(self._shape)
         self._grad  : ttensor = ttensor()
         self._diag_hess_factors : list[np.ndarray] = []
         self.jac_times : list[float] = []
-        self.DEBUG = False
+        self.DEBUG = True
         
     def update(self, M: ttensor, Mfs: tensor, grad=True, jacs: bool=True, prec=True) -> None:
         self.M = M
@@ -168,11 +173,11 @@ class TuckerGoals:
         return
     
     def recompute_jacs(self):
-        for _,g in zip(self.weights, self.goals):
+        for _, g in zip(self.weights, self.goals):
             tic = _time.time()
-            val, jac = g.computeTarget(self.Mfs, compute_deriv=True)
-            g.val = val
-            g.jac = jac
+            vec, jac = g.computeVector(self.Mfs, compute_deriv=True)
+            g.cached_vec = vec
+            g.cached_jac = jac
             # ^ That caches the goal's value and Jacobian for future use.
             toc = _time.time()
             self.jac_times.append(toc - tic)
@@ -181,13 +186,13 @@ class TuckerGoals:
     def value(self):
         F = 0.0
         for w,g in zip(self.weights, self.goals):
-            F += w * g.computeValue(self.Mfs)
+            F += w * g.computeScalar(self.Mfs)
         return F
     
     def recompute_grad(self) -> None:
         Yg = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
-            Yg += w * g.computeDeriv(self.Mfs)
+            Yg += w * g.computeGrad(self.Mfs)
             # ^ I think that line is only a correct implementation because of weird decisions
             #   about how computeDeriv works.
             #
@@ -203,7 +208,7 @@ class TuckerGoals:
         # compute necessary gradient info
         Yd = np.zeros(self._shape, order='F')
         for w,g in zip(self.weights, self.goals):
-            jac  = g.jac
+            jac  = g.cached_jac
             var  = g.var
             time = g.time
 
@@ -241,7 +246,7 @@ class TuckerGoals:
         for w, g in zip(self.weights, self.goals):
             goal_scale = np.sqrt(2 * w)
             time = g.time
-            jac  = g.jac
+            jac  = g.cached_jac
             jac_mat_shape = self._shape[0:self._ndim-1] + (1,)
             for t in time:
                 jac_t = tensor(jac[:,:,:,t], shape=jac_mat_shape, copy=False)
@@ -278,7 +283,7 @@ class TuckerGoals:
     def eval_goals(self, U: tensor, scaled=False):   
         if scaled:
             U = self.scaler.unscale_tensor(U)
-        v = np.array([g.computeValue(U) for g in self.goals])
+        v = np.array([g.computeScalar(U) for g in self.goals])
         return v 
 
     def auto_reweight(self, U: tensor, scaled=False):

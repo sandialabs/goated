@@ -136,7 +136,7 @@ class CPGoals:
 
     def recompute_jacs(self) -> None:
         for _,g in zip(self.weights,self.goals):
-            val, jac = g.computeTarget(self.Mf, compute_deriv=True)
+            val, jac = g.computeVector(self.Mf, compute_deriv=True)
             g.val = val
             g.jac = jac
         return
@@ -144,13 +144,13 @@ class CPGoals:
     def value(self) -> float:
         F = 0
         for w,g in zip(self.weights, self.goals):
-            F += w * g.computeValue(self.Mf)
+            F += w * g.computeScalar(self.Mf)
         return F
     
     def recompute_grad(self) -> None:
         Y = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
-            Y += w * g.computeDeriv(self.Mf)
+            Y += w * g.computeGrad(self.Mf)
         Y = tensor(Y)
         V = Y.mttkrps(self.Ms)
         V = ktensor(V)
@@ -210,7 +210,7 @@ class CPGoals:
     def eval_goals(self, U: tensor, scaled=False):   
         if scaled:
             U = self.scaler.unscale_tensor(U)
-        v = np.array([g.computeValue(U) for g in self.goals])
+        v = np.array([g.computeScalar(U) for g in self.goals])
         return v 
 
     def auto_reweight(self, U: tensor, scaled=False):
