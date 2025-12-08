@@ -72,7 +72,6 @@ def compute_momentum(X, var, time, exo: ExoInfo, compute_deriv=False) -> Tuple[n
         return np.sqrt(p), np.empty(())
 
 
-
 @set_docstring(
     DOCSTRING_TEMPLATE_COMPUTE\
     .replace( 'COMPUTE_SUB',
@@ -109,7 +108,6 @@ def compute_magnetic_energy(X, var, time, exo: ExoInfo, compute_deriv=False) -> 
         return out[0], out[1]
     else:
         return out[0], np.empty(())
-
 
 
 @set_docstring(
