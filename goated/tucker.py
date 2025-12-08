@@ -157,7 +157,7 @@ class TuckerGoals:
         else:
             raise ValueError()
         self._ndim  : int = len(self._shape)
-        self._grad  : ttensor = ttensor()
+        self._grad  : tensor = tensor()
         self._diag_hess_factors : list[np.ndarray] = []
         self.jac_times : list[float] = []
         self.DEBUG = True
@@ -195,10 +195,10 @@ class TuckerGoals:
             Yg += w * g.computeGrad(self.Mfs)
         Yg = tensor(Yg)
         Yg = self.scaler.unscale_tensor(Yg, shift=False)
-        self._grad = Yg
+        self._grad : tensor = Yg
         return
 
-    def gradient(self) -> ttensor:
+    def gradient(self) -> tensor:
         return self._grad
     
     def hessvec(self, Md: tensor) -> tensor:
@@ -218,6 +218,7 @@ class TuckerGoals:
                 vd = np.zeros((time.size,))
                 for i in range(time.size):
                     vd[i] = np.reshape(jac[:,:,var,time[i]],(1,-1),order='F') @ np.reshape(Md[:,:,var,time[i]],(-1,1),order='F')
+                assert np.linalg.norm(vd - val_dot) <= 1e-8 * np.maximum(1.0, np.linalg.norm(vd))
 
             # compute dot gradient tensor dF/dM(i,j,v,t)
             jac_dot = np.zeros(jac.shape)
@@ -232,6 +233,7 @@ class TuckerGoals:
                 jd = np.zeros(jac.shape)
                 for i in range(time.size):
                     jd[:,:,var,time[i]] = 2*val_dot[i]*jac[:,:,var,time[i]]
+                assert np.linalg.norm(jac_dot - jd) <= 1e-8 * np.maximum(1.0, np.linalg.norm(jd))
 
             Yd += w*jac_dot
         Yd = self.scaler.unscale_tensor(Yd, shift=False)
@@ -299,6 +301,7 @@ class GotchaObjective(TuckerObjective):
         self.b = b
         self.jacobi = jacobi
         self.block_jacobi_ops_cache = []
+        self._grad : tensor = tensor()
 
     def update(self, M, prec=True, grad=True):
         super().update(M, grad=False, prec=False)
@@ -307,10 +310,7 @@ class GotchaObjective(TuckerObjective):
         self.goals.update(self.M, self.Mfs, grad=True, jacs=True)
         self.times['recompute hessian'].extend(jac_times)
         if grad:
-            super().recompute_grad()
-            # ^ That function does something with the output of 
-            #   self._deriv_wrt_reconstructed_tensor(), which has a meaningful 
-            #   implementation.
+            self.recompute_grad()
         if prec:
             if self.jacobi:
                 self.recompute_prec()
@@ -324,9 +324,6 @@ class GotchaObjective(TuckerObjective):
         return F
     
     def _deriv_wrt_reconstructed_tensor(self) -> tensor:
-        # This is called in self.recompute_grad().
-        # It's the total derivative of the loss function w.r.t. the reconstructed
-        # tensor.
         Yg = self.goals.gradient()
         Y = self.Mf - self.X
         Zb = (2*self.a)*Y + self.b*Yg
@@ -340,7 +337,13 @@ class GotchaObjective(TuckerObjective):
         Zbd = (2*self.a)*Zd + self.b*Yd
         return Zbd
 
-    def recompute_prec(self):
+    def recompute_grad(self) -> None:
+        # Parent class implementation relies on self._deriv_wrt_params,
+        # which we've reimplemented.
+        super().recompute_grad()
+        return
+
+    def recompute_prec(self) -> None:
         M = self.M
         tic = _time.time()
         goal_panels = self.goals.gn_diag_block_goal_updates()
@@ -367,6 +370,11 @@ class GotchaObjective(TuckerObjective):
         self.times['recompute_bj_prec, marginal'].append(tic - toc)
         self.block_jacobi_ops_cache.append([op for op in self.C])
         return
+    
+    def hessvec(self, V: ttensor) -> ttensor:
+        # Parent class implementation relies on self._tangent_reconstructed_tensor,
+        # which we've reimplemented.
+        return super().hessvec(V)
 
     def compute_diag_blocks(self, M):
         # A helper function, for testing purposes only.
