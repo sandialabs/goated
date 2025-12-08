@@ -1,6 +1,7 @@
 import numpy as np
 import pyttb as ttb
 import math
+from typing import Callable
  
 
 class ExoInfo:
@@ -270,7 +271,7 @@ class ExoInfo:
         J = np.linalg.det(A@np.column_stack((x,y)))
         return J
     
-    def compute_spatial_integral(self, X, var, time, func=None, deriv=None, compute_func=True, compute_deriv=False) -> tuple[np.floating, np.ndarray]:
+    def compute_spatial_integral(self, X, var, time, func: Callable, deriv: Callable, compute_func=True, compute_deriv=False) -> tuple[np.ndarray, np.ndarray]:
         """
         Perform a finite-element-style spatial integral of a user-supplied functional
         (and optionally its derivative) over the planar mesh.
@@ -315,8 +316,7 @@ class ExoInfo:
         ValueError
             If `compute_deriv=True` but `deriv` is None.
         """
-
-        if isinstance(X, ttb.ktensor):
+        if not isinstance(X, np.ndarray):
             Xf = X.full().double()
         else:
             Xf = X
@@ -330,12 +330,12 @@ class ExoInfo:
         nx = Xf.shape[0]
         ny = Xf.shape[1]
 
-        p = np.nan
+        p   = np.empty((0,))
         jac = np.empty((0,))
 
         # get nodal values for each element
         I = self.tensor_linear_ind
-        Xff = np.reshape(Xf.data[np.ix_(range(nx),range(ny),var,time)],(nx*ny, num_var, num_time), order='F')
+        Xff = np.reshape(Xf[np.ix_(range(nx),range(ny),var,time)],(nx*ny, num_var, num_time), order='F')
         u = np.reshape(Xff[I,:,:],(num_node_per_elem, num_elem*num_var*num_time), order='F')
 
         # interpolate to quadrature points
@@ -345,7 +345,7 @@ class ExoInfo:
         if compute_func:
             f = func(v) # evaluate functional
             w_det_J1 = np.tile(np.reshape(self.w_det_J,(num_qp_per_elem,num_elem,1),order='F'),(1,1,num_time)) # compute element transformation weights
-            p : np.floating = np.sum(w_det_J1*f,(0,1)) # compute integral
+            p = np.sum(w_det_J1*f, axis=(0, 1)) # compute integral
 
         # compute gradient tensor
         if compute_deriv:
