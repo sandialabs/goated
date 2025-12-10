@@ -91,26 +91,26 @@ class GoatedRolObjective(TrustRegionObjective):
 
     def gradient(self, g, x, tol):
         TrustRegionObjective.gradient(self, g, x, tol)
-        temp = self._our_objective.gradient()
-        temp = self._rolvector_type.from_tensor(temp)
-        g.set(temp)
+        temp_ten = self._our_objective.gradient()
+        temp_vec = self._rolvector_type.from_tensor(temp_ten)
+        g.set(temp_vec)
 
     def hessVec(self, hv, v, x, tol):
         TrustRegionObjective.hessVec(self, hv, v, x, tol)
-        v = v.to_tensor()
-        temp = self._our_objective.hessvec(v)
-        temp = self._rolvector_type.from_tensor(temp)
-        hv.set(temp)
+        v_ten = v.to_tensor()
+        temp_ten = self._our_objective.hessvec(v_ten)
+        temp_vec = self._rolvector_type.from_tensor(temp_ten)
+        hv.set(temp_vec)
 
     def precond(self, pv, v, x, tol):
         TrustRegionObjective.precond(self, pv, v, x, tol)
         if not self._precondition:
             pv.set(v)
             return
-        v = v.to_tensor()
-        temp = self._our_objective.precvec(v)
-        temp = self._rolvector_type.from_tensor(temp)
-        pv.set(temp)
+        v_ten = v.to_tensor()
+        temp_ten = self._our_objective.precvec(v_ten)
+        temp_vec = self._rolvector_type.from_tensor(temp_ten)
+        pv.set(temp_vec)
 
     def compute_hessian(self, x, parallel=False):
         n = x.dimension()

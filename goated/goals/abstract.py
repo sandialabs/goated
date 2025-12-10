@@ -10,10 +10,10 @@ class Goal:
     # Abstract class. All implementations currently go through PhysicsGoal, defined below.
 
     def __init__(self, ground_truth : Tensor) -> None:
-        self.target, _ = self.computeVector(ground_truth, compute_deriv=False)
         self.domain_shape = ground_truth.shape
         self.cached_vec  : np.ndarray = np.empty(())
         self.cached_jac  : np.ndarray = np.empty(())
+        self.target, _ = self.computeVector(ground_truth, compute_deriv=False)
         return
     
     def computeVector(self, U : Tensor, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
