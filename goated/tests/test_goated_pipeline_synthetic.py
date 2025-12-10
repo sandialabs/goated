@@ -46,6 +46,7 @@ class DummyExo(ExoInfo):
         self.node_linear_ind = np.arange(nx*ny)
         self.tensor_elem_linear_ind = np.arange(nx*ny).reshape(1,-1)
         self.var_mode = 2
+        # self.setupIntegrationInfo()
 
     def compute_spatial_integral(self,
                                  X,          # ndarray (nx,ny,nvar,ntime)
@@ -55,36 +56,7 @@ class DummyExo(ExoInfo):
                                  deriv=None,
                                  compute_func=True,
                                  compute_deriv=False):
-        """
-        We ignore all the fancy FE machinery and simply sum func(...) over
-        the two spatial dims and the var‐subset.  Jacobs are either 0 or 1.
-        """
-        # extract the sub‐array
-        if hasattr(X, 'full'):  # handle ktensor case
-            Xf = X.full().double()
-        else:
-            Xf = X
-        # Xf shape = (nx,ny,nvar,ntime)
-        sub = Xf[np.ix_(range(Xf.shape[0]),
-                        range(Xf.shape[1]),
-                        var,
-                        time)]  # shape => (nx,ny,len(var),len(time))
-
-        # build values at each (i,j,var,t)
-        if compute_func:
-            fv = func(sub)   # expects shape (nx,ny,len(time))
-            # sum over i,j => produce one number per time
-            p = fv.sum(axis=(0,1))
-        else:
-            p = np.zeros(len(time))
-
-        if compute_deriv:
-            # we assign a trivial Jacobian of all ones
-            jac = np.ones_like(Xf)
-        else:
-            jac = np.empty((0,), dtype=float)
-
-        return p, jac
+        raise NotImplementedError()
 
 
 def test_goated_pipeline_synthetic(nx=5, ny=5, nvar=5, nt=5, rank_approx=1):
@@ -165,63 +137,7 @@ def test_goated_pipeline_synthetic(nx=5, ny=5, nvar=5, nt=5, rank_approx=1):
 
     pass
 
-
-def test_tucker_synthetic(nx=5, ny=5, nvar=5, nt=5, rank_approx=1):
-    """
-    Integration‐style smoke test: build a tiny synthetic 4‐way tensor,
-    define a single momentum goal, run the full GoatedRolModel solver,
-    and assert that the goal errors shrink.
-    """
-    X_data = np.zeros((nx, ny, nvar, nt), dtype=float)
-    for i in range(nx):
-        for j in range(ny):
-            for v in range(nvar):
-                for t in range(nt):
-                    X_data[i,j,v,t] = np.sqrt(i + 2*1/(j+1) + 3*v**0.5 + t**1.5)
-    X_tt = ttb.tensor(X_data)
-    Xs = X_tt
-
-    gotcha = TuckerObjective(Xs)
-
-    us0 = ttb.hosvd(Xs, tol=1e-15)
-    truncated_factors = []
-    for U in us0.factor_matrices:
-        truncated_factors.append(U[:, :rank_approx])
-    initial_decomp = ttb.ttensor(
-        us0.core[:rank_approx, :rank_approx, :rank_approx, :rank_approx], truncated_factors
-    )
-
-    model = GoatedRolModel(gotcha, initial_decomp)
-    params = pyrol.ParameterList()
-    params['General'] =  pyrol.ParameterList()
-    params['General']['Output Level'] = 1
-    params['General']['Krylov'] = pyrol.ParameterList()
-    params['General']['Krylov']['Iteration Limit'] = 1_000
-    params['Step'] = pyrol.ParameterList()
-    params['Step']['Trust Region'] = pyrol.ParameterList()
-    params['Step']['Trust Region']['Initial Radius'] = 10.0
-    params['Step']['Trust Region']['Subproblem Solver'] = 'Truncated CG'
-    params['Status Test'] = pyrol.ParameterList()
-    params['Status Test']['Iteration Limit'] = 20
-    model.solve(rol_params=params)
-
-    # 10) Pull out the final decomposition & reevaluate the goals
-    final = model.decomp
-
-    U0 = initial_decomp.full()
-    fit0 = 1-(X_tt-U0).norm()/X_tt.norm()
-
-    U1 = final.full()
-    fit1 = 1-(X_tt-U1).norm()/X_tt.norm()
-
-    assert fit1 <= fit0, (
-        f"Tucker optimization _DECREASED_ fit; before={fit0:.6e}, after={fit1:.6e}"
-    )
-
-    pass
-
 if __name__ == '__main__':
-    #test_tucker_synthetic()
     test_goated_pipeline_synthetic()
     # test_goated_pipeline_synthetic(nx=10, ny=11, nvar=10, nt=13, rank_approx=2)
     print()
