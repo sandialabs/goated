@@ -1,6 +1,6 @@
-import pyttb as ttb
-import numpy as np
 
+import numpy as np
+from pyttb import tensor, ktensor # type: ignore
 
 
 class Scaler:
@@ -23,7 +23,7 @@ class Scaler:
 
 class StdScaler(Scaler):
 
-    def __init__(self, X, mode, smin = 1.0e-12):
+    def __init__(self, X: tensor, mode, smin = 1.0e-12):
         self.mode = mode
 
         # list of modes not including mode
@@ -44,18 +44,18 @@ class StdScaler(Scaler):
         # compatible shape for s for arithmetic with factor matrices
         self.sk = np.reshape(self.s,(X.shape[mode],1))
 
-    def scale_tensor(self, X):
+    def scale_tensor(self, X: tensor) -> tensor:
         Xs = (X.data - self.mt) / self.st
-        return ttb.tensor(Xs)
+        return tensor(Xs)
     
-    def unscale_tensor(self, X, shift=True):
+    def unscale_tensor(self, X: tensor, shift=True) -> tensor:
         if shift:
             Xs = X.data * self.st + self.mt
         else:
             Xs = X.data * self.st
-        return ttb.tensor(Xs)
+        return tensor(Xs)
     
-    def scale_ktensor(self, u, var=None):
+    def scale_ktensor(self, u: ktensor, var=None) -> ktensor:
         us = u.copy()
         if var is None:
             us.factor_matrices[self.mode] /= self.sk
@@ -63,7 +63,7 @@ class StdScaler(Scaler):
             us.factor_matrices[self.mode][var,:] /= self.sk[var,:]
         return us
     
-    def unscale_ktensor(self, u, var=None):
+    def unscale_ktensor(self, u: ktensor, var=None) -> ktensor:
         us = u.copy()
         if var is None:
             us.factor_matrices[self.mode] *= self.sk
