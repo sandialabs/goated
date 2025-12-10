@@ -1,7 +1,7 @@
 from pyttb import tensor, ktensor  # type: ignore
 import numpy as np
 import scipy.linalg as la
-from goated.goals.abstract import Goal
+from goated.goals.abstract import Goal, PhysicsGoal
 from typing import Optional, Tuple, List, Sequence
 
 
@@ -109,7 +109,7 @@ class CPObjective:
 
 class CPGoals:
 
-    def __init__(self, scaler, goals : List[Goal], weights : Optional[Sequence[float] | np.ndarray] = None):
+    def __init__(self, scaler, goals : List[PhysicsGoal], weights : Optional[Sequence[float] | np.ndarray] = None):
         assert len(goals) > 0
         self.scaler = scaler
         self.goals = goals
@@ -160,7 +160,7 @@ class CPGoals:
     def gradient(self) -> ktensor:
         return self._grad
 
-    def hessvec(self, V: ktensor) -> ktensor:
+    def _sort_of_hessvec(self, V: ktensor) -> ktensor:
         # Compute unscaled data if we were provided scaling
         Vs = self.scaler.unscale_ktensor(V)
 
@@ -180,23 +180,7 @@ class CPGoals:
         # compute necessary gradient info
         Yd = np.zeros(self._shape,order='F')
         for w,g in zip(self.weights,self.goals):
-            var = g.var
-            time = g.time
-            num_time = len(time)
-            jac = g.cached_jac
-                
-            # compute val_dot (could tangent-differentiate fcn, but since we already have jac, we just do a mat-vec)
-            val_dot = np.zeros((num_time,1))
-            for i in range(num_time):
-                val_dot[i] = np.reshape(jac[:,:,var,time[i]],(1,-1),order='F') @ np.reshape(Md[:,:,var,time[i]],(-1,1),order='F')
-
-            # compute dot gradient tensor dF/dM(i,j,v,t)
-            # adding in 2*diff(i)*goal_scaling(i) * the tangent derivative of jac_M would
-            # make this the full Hessian-vector product
-            jac_dot = np.zeros(jac.shape)
-            for i in range(num_time):
-                jac_dot[:,:,var,time[i]] = (2*val_dot[i])*jac[:,:,var,time[i]]
-
+            jac_dot = g._gn_hessvec(Md)
             Yd += w*jac_dot
 
         # compute unscaled Gauss-Newton Hessian-vector product
@@ -227,9 +211,9 @@ class GocchaObjective(CPObjective):
         self.a = a
         self.b = b
         
-    def update(self, M, grad=True, prec=True, hess=True):
+    def update(self, M: ktensor, grad=True, prec=True, hess=True):
         super().update(M, prec=prec, grad=False, hess=hess)
-        self.goals.update(M)
+        self.goals.update(M, grad=True, jacs=True)
         if grad:
             self.recompute_grad()
         
@@ -238,7 +222,7 @@ class GocchaObjective(CPObjective):
         F += self.b * self.goals.value()
         return F
     
-    def recompute_grad(self):
+    def recompute_grad(self) -> None:
         super().recompute_grad()
         G = self._grad.factor_matrices
         Ggoal = self.goals.gradient()
@@ -246,13 +230,13 @@ class GocchaObjective(CPObjective):
         G = ktensor(G)
         self._grad = G
     
-    def hessvec(self, V):
+    def hessvec(self, V: ktensor) -> ktensor:
         HvFrob_factors = super().hessvec(V).factor_matrices
-        HvGoal_factors = self.goals.hessvec(V).factor_matrices
+        HvGoal_factors = self.goals._sort_of_hessvec(V).factor_matrices
         Hv = [self.a*F + self.b*G for (F,G) in zip(HvFrob_factors, HvGoal_factors)]
         Hv = ktensor(Hv)
         return Hv
     
-    def precvec(self, V):
+    def precvec(self, V: ktensor) -> ktensor:
         Pv = super().precvec(V)
         return Pv
