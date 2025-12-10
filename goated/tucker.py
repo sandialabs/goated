@@ -72,15 +72,14 @@ class TuckerObjective:
     def gradient(self) -> ttensor:
         return self._grad
     
-    def _tangent_reconstructed_tensor(self, V, rescale=True) -> tensor:
+    def _tangent_reconstructed_tensor(self, V: ttensor, rescale=True) -> tensor:
         M = self.M
         Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
         for i in range(1, self._ndims):
             Zd = self.Z[i-1].ttm(V.factor_matrices[i],i) + Zd.ttm(M.factor_matrices[i],i)
         if rescale:
-            return (2/self.s)*Zd
-        else:
-            return Zd
+            Zd *= 2/self.s
+        return Zd  # type: ignore
 
     def hessvec(self, V) -> ttensor:
         M = self.M
