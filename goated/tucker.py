@@ -1,9 +1,9 @@
-from pyttb import tensor, ttensor # type: ignore
+from pyttb import tensor, ttensor  # type: ignore
 import numpy as np
 
 import goated.utils.linops as linops
 from collections import defaultdict
-from goated.goals.abstract import Goal
+from goated.goals.abstract import Goal, PhysicsGoal
 from typing import Tuple, List, Optional, Sequence
 import time as _time
 
@@ -142,7 +142,7 @@ class TuckerObjective:
 
 class TuckerGoals:
 
-    def __init__(self, scaler, goals : List[Goal], weights : Optional[Sequence[float] | np.ndarray] = None, _shape=None):
+    def __init__(self, scaler, goals : List[PhysicsGoal], weights : Optional[Sequence[float] | np.ndarray] = None, _shape=None):
         self.scaler = scaler
         self.goals = goals
         if weights is None:
@@ -150,12 +150,7 @@ class TuckerGoals:
         self.weights = weights
         self.M   : ttensor = ttensor()
         self.Mfs : tensor  = tensor()
-        if len(goals) > 0:
-            self._shape : Tuple[int,...] = goals[0].domain_shape
-        elif isinstance(_shape, tuple):
-            self._shape : Tuple[int,...] = _shape
-        else:
-            raise ValueError()
+        self._shape : Tuple[int,...] = goals[0].domain_shape
         self._ndim  : int = len(self._shape)
         self._grad  : tensor = tensor()
         self._diag_hess_factors : list[np.ndarray] = []
@@ -198,84 +193,21 @@ class TuckerGoals:
         self._grad : tensor = Yg
         return
 
-    def gradient(self) -> tensor:
+    def gradient_wrt_reconstruction(self) -> tensor:
         return self._grad
     
-    def hessvec(self, Md: tensor) -> tensor:
-        # compute necessary gradient info
+    def _sort_of_hessvec(self, Md: tensor) -> tensor:
         Yd = np.zeros(self._shape, order='F')
         for w,g in zip(self.weights, self.goals):
-            jac  = g.cached_jac
-            var  = g.var
-            time = g.time
-
-            # compute val_dot (could tangent-differentiate fcn, but since we already have jac, we just do a mat-vec)
-            jact = jac[:,:,:,time]
-            Mdt  = Md[:,:,:,time]
-            val_dot = np.zeros((time.size,))
-            val_dot[:] = np.einsum('hijk,hijk->k', jact[:,:,var,:], Mdt[:,:,var,:])
-            if self.DEBUG:
-                vd = np.zeros((time.size,))
-                for i in range(time.size):
-                    vd[i] = np.reshape(jac[:,:,var,time[i]],(1,-1),order='F') @ np.reshape(Md[:,:,var,time[i]],(-1,1),order='F')
-                assert np.linalg.norm(vd - val_dot) <= 1e-8 * np.maximum(1.0, np.linalg.norm(vd))
-
-            # compute dot gradient tensor dF/dM(i,j,v,t)
-            jac_dot = np.zeros(jac.shape)
-            mask_t  = np.zeros(jac.shape, dtype=bool)
-            mask_v  = np.zeros(jac.shape, dtype=bool)
-            mask_t[:,:,:,time] = True
-            mask_v[:,:,var,:]  = True 
-            ro = 'C'  # doesn't matter, just be explicit.
-            mask = (mask_t & mask_v).ravel(order=ro)
-            jac_dot.ravel(order=ro)[mask] = (2*val_dot[None,None,:]*jact[:,:,var,:]).ravel(order=ro)
-            if self.DEBUG:
-                jd = np.zeros(jac.shape)
-                for i in range(time.size):
-                    jd[:,:,var,time[i]] = 2*val_dot[i]*jac[:,:,var,time[i]]
-                assert np.linalg.norm(jac_dot - jd) <= 1e-8 * np.maximum(1.0, np.linalg.norm(jd))
-
+            jac_dot = g._gn_hessvec(Md)
             Yd += w*jac_dot
         Yd = self.scaler.unscale_tensor(Yd, shift=False)
         return Yd
 
     def gn_diag_block_goal_updates(self):
-        M = self.M
         factor_cols = [[] for _ in range(self._ndim + 1)]
         for w, g in zip(self.weights, self.goals):
-            goal_scale = np.sqrt(2 * w)
-            time = g.time
-            jac  = g.cached_jac
-            jac_mat_shape = self._shape[0:self._ndim-1] + (1,)
-            for t in time:
-                jac_t = tensor(jac[:,:,:,t], shape=jac_mat_shape, copy=False)
-                jac_t = self.scaler.unscale_tensor(jac_t, shift=False)
-                for n in range(self._ndim):
-                    mats, dims = [], []
-                    for i in range(self._ndim):
-                        if i != n:
-                            if i == self._ndim-1:
-                                mats.append(np.reshape(M.factor_matrices[i][t,:],(1,-1)))
-                            else:
-                                mats.append(M.factor_matrices[i])
-                            dims.append(i)
-                    D = jac_t.ttm(mats, dims=dims, transpose=True)
-                    D = D.to_tenmat(np.array([n])).data @ M.core.to_tenmat(np.array([n])).data.T
-                    if n == self._ndim-1:
-                        D2 = np.zeros((self._shape[n], M.core.shape[n]))
-                        D2[t,:] = D
-                        D = D2
-                    D = goal_scale * np.reshape(D, (-1,1), order='F')
-                    factor_cols[n].append(D)
-
-                # Core term
-                mats = [M.factor_matrices[i] for i in range(self._ndim-1)]
-                mats.append(np.reshape(M.factor_matrices[-1][t,:],(1,-1)))
-                dims = list(range(self._ndim))
-                D = jac_t.ttm(mats, dims=dims, transpose=True)
-                D = goal_scale * np.reshape(D.data, (-1,1), order='F')
-                factor_cols[-1].append(D)
-
+            g._tucker_gn_block_diag_goal_updates(w, self.M, self.scaler, factor_cols)
         factors = [np.column_stack(cols) for cols in factor_cols]
         return factors
 
@@ -324,7 +256,7 @@ class GotchaObjective(TuckerObjective):
         return F
     
     def _deriv_wrt_reconstructed_tensor(self) -> tensor:
-        Yg = self.goals.gradient()
+        Yg = self.goals.gradient_wrt_reconstruction()
         Y = self.Mf - self.X
         Zb = (2*self.a)*Y + self.b*Yg
         return Zb
@@ -333,7 +265,7 @@ class GotchaObjective(TuckerObjective):
         Zd = super()._tangent_reconstructed_tensor(V, rescale=False)
         Md = tensor(Zd.data)
         Md = self.scaler.unscale_tensor(Md, shift=False).data
-        Yd = self.goals.hessvec(Md)
+        Yd = self.goals._sort_of_hessvec(Md)
         Zbd = (2*self.a)*Zd + self.b*Yd
         return Zbd
 
