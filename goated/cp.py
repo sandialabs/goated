@@ -15,6 +15,7 @@ class CPObjective:
         self._ndims : int = len(self._shape)
         self._grad : ktensor = ktensor()
 
+    # different between CP and Tucker
     def update(self, M, prec=True, grad=True) -> None:
         self.M = M
         self.Mf = M.full()
@@ -23,26 +24,31 @@ class CPObjective:
         if grad:
             self.recompute_grad()
         return
-        
+    
+    # same for CP and Tucker
     def value(self) -> float:
         Y = self.Mf-self.X
         F = (Y.norm()**2)/self.s
         return F
     
+    # different between CP and Tucker
     def recompute_grad(self) -> None:
-        Y : tensor = (2/self.s)*(self.Mf-self.X)
-        G = ktensor(Y.mttkrps(self.M))
+        Zb : tensor = self._deriv_wrt_reconstructed_tensor()
+        G = ktensor(Zb.mttkrps(self.M))
         self._grad = G
 
+    # same for CP and Tucker; trivial
     def gradient(self) -> ktensor:
         return self._grad
     
+    # different between CP and Tucker
     def hessvec(self, V: ktensor) -> ktensor:
         Zbd = self._tangent_reconstructed_tensor(V)
         Hv_factors = [Zbd.mttkrp(self.M, k) for k in range(self._ndims)]
         Hv = ktensor(Hv_factors)
         return Hv
     
+    # different between CP and Tucker
     def recompute_prec(self):
         d = self._ndims
         A = self.M.factor_matrices
@@ -59,7 +65,8 @@ class CPObjective:
         self.Vc = [la.cholesky(self.U[k,:,:], lower=False) for k in range(d)]
         return
 
-    def precvec(self, V) -> ktensor:
+    # different between CP and Tucker
+    def precvec(self, V: ktensor) -> ktensor:
         d = self._ndims
         #  Gauss-Newton block diagonal preconditioner
         Ab = V.factor_matrices
@@ -71,10 +78,12 @@ class CPObjective:
         Pv = ktensor(Pv)
         return Pv
 
+    # same for CP and Tucker
     def _deriv_wrt_reconstructed_tensor(self) -> tensor:
         Zb = (2/self.s)*(self.Mf-self.X)
         return Zb
     
+    # different between CP and Tucker
     def _tangent_reconstructed_tensor(self, V: ktensor, rescale=True) -> tensor:
         """
         Compute the forward-mode directional derivative of the full CP  
@@ -131,25 +140,26 @@ class CPGoals:
             g.cached_jac = jac
         return
 
+    # same for CP and Tucker
     def value(self) -> float:
         F = 0
         for w,g in zip(self.weights, self.goals):
             F += w * g.computeScalar(self.Mf)
         return F
-    
-    def recompute_grad(self) -> None:
+
+    def recompute_grad(self):
         Y = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
             Y += w * g.computeGrad(self.Mf)
         Y = tensor(Y)
-        V = Y.mttkrps(self.Ms)
-        V = ktensor(V)
-        V = self.scaler.unscale_ktensor(V)
-        self._grad = V
+        Y = self.scaler.unscale_tensor(Y, shift=False)
+        self._grad = Y
 
-    def gradient(self) -> ktensor:
+    # same for CP and Tucker; trivial
+    def gradient_wrt_reconstruction(self):
         return self._grad
 
+    # same for CP and Tucker
     def _sort_of_hessvec(self, Md: tensor) -> tensor:
         Yd = np.zeros(self._shape, order='F')
         for w,g in zip(self.weights, self.goals):
@@ -191,12 +201,22 @@ class GocchaObjective(CPObjective):
         return F
     
     def recompute_grad(self) -> None:
-        super().recompute_grad()
-        G = self._grad.factor_matrices
-        Ggoal = self.goals.gradient()
-        G = [self.a*G[i]+self.b*Ggoal.factor_matrices[i] for i in range(self._ndims)]
-        G = ktensor(G)
-        self._grad = G
+        # Parent class implementation relies on self._deriv_wrt_params,
+        # which we've reimplemented.
+        return super().recompute_grad()
+
+    def hessvec(self, V: ktensor) -> ktensor:
+        return super().hessvec(V)
+    
+    def precvec(self, V: ktensor) -> ktensor:
+        Pv = super().precvec(V)
+        return Pv
+
+    def _deriv_wrt_reconstructed_tensor(self) -> tensor:
+        Yg = self.goals.gradient_wrt_reconstruction()
+        Y = self.Mf - self.X
+        Zb = (2*self.a)*Y + self.b*Yg
+        return Zb
     
     def _tangent_reconstructed_tensor(self, V) -> tensor:
         Zd = super()._tangent_reconstructed_tensor(V, rescale=False)
@@ -205,10 +225,3 @@ class GocchaObjective(CPObjective):
         Yd = self.goals._sort_of_hessvec(Md)
         Zbd = (2*self.a)*Zd + self.b*Yd
         return Zbd
-
-    def hessvec(self, V: ktensor) -> ktensor:
-        return super().hessvec(V)
-    
-    def precvec(self, V: ktensor) -> ktensor:
-        Pv = super().precvec(V)
-        return Pv

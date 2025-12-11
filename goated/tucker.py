@@ -22,38 +22,31 @@ class TuckerObjective:
         self._grad : ttensor = ttensor()
         self.times = defaultdict(list)
 
-    def full(self, M) -> tensor:
-        # Same as M.full(), except saves the intermediate tensors
-        ZZ = M.core.ttm(M.factor_matrices[0],0)
-        self.Z = [ ZZ ]
-        for i in range(1,self._ndims):
-            ZZ = ZZ.ttm(M.factor_matrices[i],i)
-            self.Z.append(ZZ)
-        return ZZ
-
+    # different between CP and Tucker
     def update(self, M, prec=True, grad=True) -> None:
         self.M = M
-        self.Mf = self.full(M)
-        # compute intermediate tenmats used in gradient and hessvec
+        ZZ = M.core.ttm(M.factor_matrices[0], 0)
+        self.Z = [ ZZ ]
+        for i in range(1,self._ndims):
+            ZZ = ZZ.ttm(M.factor_matrices[i], i)
+            self.Z.append(ZZ)
+        self.Mf = ZZ # the same as M.full().
         self.Zt = [ M.core.to_tenmat(np.array([0])).data.T ]
         for i in range(1,self._ndims):
             self.Zt.append(self.Z[i-1].to_tenmat(np.array([i])).data.T)
-        # whether we need to recompute point data in hessian/preconditioner
         if grad:
             self.recompute_grad()
         if prec:
             self.recompute_prec()
         return
 
+    # same for CP and Tucker
     def value(self) -> float:
         Y = self.Mf - self.X
         F = (Y.norm()**2)/self.s
         return F
-    
-    def _deriv_wrt_reconstructed_tensor(self) -> tensor:
-        Zb = (2/self.s)*(self.Mf-self.X)
-        return Zb
 
+    # different between CP and Tucker
     def recompute_grad(self) -> None:
         M = self.M
         tic = _time.time()
@@ -69,31 +62,25 @@ class TuckerObjective:
         self._grad = G
         return
 
+    # same for CP and Tucker; trivial
     def gradient(self) -> ttensor:
         return self._grad
-    
-    def _tangent_reconstructed_tensor(self, V: ttensor, rescale=True) -> tensor:
-        M = self.M
-        Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
-        for i in range(1, self._ndims):
-            Zd = self.Z[i-1].ttm(V.factor_matrices[i],i) + Zd.ttm(M.factor_matrices[i],i)
-        if rescale:
-            Zd *= 2/self.s
-        return Zd  # type: ignore
 
-    def hessvec(self, V) -> ttensor:
+    # different between CP and Tucker
+    def hessvec(self, V: ttensor) -> ttensor:
         M = self.M
         tic = _time.time()
         Zbd = self._tangent_reconstructed_tensor(V)
-        Hv = [np.empty(())] * self._ndims
+        Hv : list[np.ndarray] = [None] * self._ndims # type: ignore
         for i in reversed(range(self._ndims)):
             Hv[i] = Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
             Zbd = Zbd.ttm(M.factor_matrices[i].T,i)
-        Hv = ttensor(Zbd, Hv)
+        Hv_ten = ttensor(Zbd, Hv)
         toc = _time.time()
         self.times['gn_hessvec'].append(toc - tic)
-        return Hv
+        return Hv_ten
 
+    # different between CP and Tucker
     def recompute_prec(self):
         tic = _time.time()
         n = self._ndims
@@ -117,7 +104,8 @@ class TuckerObjective:
         self.times['recompute_bd_prec'].append(toc - tic)
         return
 
-    def precvec(self, V):        
+    # different between CP and Tucker
+    def precvec(self, V: ttensor) -> ttensor:        
         tic = _time.time()
         Pv = []
         for k in range(self._ndims):
@@ -138,6 +126,21 @@ class TuckerObjective:
         self.times['gn_bd_precvec'].append(toc - tic)
         return Pv
 
+    # same for CP and Tucker
+    def _deriv_wrt_reconstructed_tensor(self) -> tensor:
+        Zb = (2/self.s)*(self.Mf-self.X)
+        return Zb
+
+    # different between CP and Tucker
+    def _tangent_reconstructed_tensor(self, V: ttensor, rescale=True) -> tensor:
+        M = self.M
+        Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
+        for i in range(1, self._ndims):
+            Zd = self.Z[i-1].ttm(V.factor_matrices[i],i) + Zd.ttm(M.factor_matrices[i], i)
+        if rescale:
+            Zd *= 2/self.s
+        return Zd  # type: ignore
+
 
 class TuckerGoals:
 
@@ -154,11 +157,12 @@ class TuckerGoals:
         self._grad  : tensor = tensor()
         self._diag_hess_factors : list[np.ndarray] = []
         self.jac_times : list[float] = []
-        self.DEBUG = True
+        self.DEBUG = False
         
     def update(self, M: ttensor, Mfs: tensor, grad=True, jacs: bool=True, prec=True) -> None:
         self.M = M
         self.Mfs = Mfs
+        # self.Mfs = self.scaler.unscale_tensor(M.full())
         if grad or jacs or prec:
             self.recompute_jacs()
         if grad:
@@ -166,7 +170,7 @@ class TuckerGoals:
             # ^ That needs to come after recompute_jacs().
         return
     
-    def recompute_jacs(self):
+    def recompute_jacs(self) -> None:
         for _, g in zip(self.weights, self.goals):
             tic = _time.time()
             vec, jac = g.computeVector(self.Mfs, compute_deriv=True)
@@ -177,7 +181,7 @@ class TuckerGoals:
             self.jac_times.append(toc - tic)
         return
 
-    def value(self):
+    def value(self) -> float:
         F = 0.0
         for w,g in zip(self.weights, self.goals):
             F += w * g.computeScalar(self.Mfs)
@@ -192,9 +196,11 @@ class TuckerGoals:
         self._grad : tensor = Yg
         return
 
+    # same for CP and Tucker; trivial
     def gradient_wrt_reconstruction(self) -> tensor:
         return self._grad
     
+    # same for CP and Tucker
     def _sort_of_hessvec(self, Md: tensor) -> tensor:
         Yd = np.zeros(self._shape, order='F')
         for w,g in zip(self.weights, self.goals):
@@ -203,23 +209,23 @@ class TuckerGoals:
         Yd = self.scaler.unscale_tensor(Yd, shift=False)
         return Yd
 
-    def gn_diag_block_goal_updates(self):
-        factor_cols = [[] for _ in range(self._ndim + 1)]
-        for w, g in zip(self.weights, self.goals):
-            g._tucker_gn_block_diag_goal_updates(w, self.M, self.scaler, factor_cols)
-        factors = [np.column_stack(cols) for cols in factor_cols]
-        return factors
-
-    def eval_goals(self, U: tensor, scaled=False):   
+    def eval_goals(self, U: tensor, scaled=False) -> np.ndarray:   
         if scaled:
             U = self.scaler.unscale_tensor(U)
         v = np.array([g.computeScalar(U) for g in self.goals])
         return v 
 
-    def auto_reweight(self, U: tensor, scaled=False):
+    def auto_reweight(self, U: tensor, scaled=False) -> None:
         v = self.eval_goals(U, scaled=scaled)
         self.weights = 1 / (v * len(self.goals))
         return
+
+    def gn_diag_block_goal_updates(self) -> list[np.ndarray]:
+        factor_cols = [[] for _ in range(self._ndim + 1)]
+        for w, g in zip(self.weights, self.goals):
+            g._tucker_gn_block_diag_goal_updates(w, self.M, self.scaler, factor_cols)
+        factors = [np.column_stack(cols) for cols in factor_cols]
+        return factors
 
 
 class GotchaObjective(TuckerObjective):
@@ -238,7 +244,11 @@ class GotchaObjective(TuckerObjective):
         super().update(M, grad=False, prec=False)
         self.Mfs = self.scaler.unscale_tensor(self.Mf)
         jac_times = []
-        self.goals.update(self.M, self.Mfs, grad=True, jacs=True)
+        self.goals.update(
+            self.M, self.Mfs,
+            grad=(prec or grad),
+            jacs=(prec or grad)
+        )
         self.times['recompute hessian'].extend(jac_times)
         if grad:
             self.recompute_grad()
@@ -254,20 +264,6 @@ class GotchaObjective(TuckerObjective):
         F += self.b * self.goals.value()
         return F
     
-    def _deriv_wrt_reconstructed_tensor(self) -> tensor:
-        Yg = self.goals.gradient_wrt_reconstruction()
-        Y = self.Mf - self.X
-        Zb = (2*self.a)*Y + self.b*Yg
-        return Zb
-
-    def _tangent_reconstructed_tensor(self, V) -> tensor:
-        Zd = super()._tangent_reconstructed_tensor(V, rescale=False)
-        Md = tensor(Zd.data)
-        Md = self.scaler.unscale_tensor(Md, shift=False).data
-        Yd = self.goals._sort_of_hessvec(Md)
-        Zbd = (2*self.a)*Zd + self.b*Yd
-        return Zbd
-
     def recompute_grad(self) -> None:
         # Parent class implementation relies on self._deriv_wrt_params,
         # which we've reimplemented.
@@ -306,6 +302,20 @@ class GotchaObjective(TuckerObjective):
         # Parent class implementation relies on self._tangent_reconstructed_tensor,
         # which we've reimplemented.
         return super().hessvec(V)
+
+    def _deriv_wrt_reconstructed_tensor(self) -> tensor:
+        Yg = self.goals.gradient_wrt_reconstruction()
+        Y = self.Mf - self.X
+        Zb = (2*self.a)*Y + self.b*Yg
+        return Zb
+
+    def _tangent_reconstructed_tensor(self, V: ttensor) -> tensor:
+        Zd = super()._tangent_reconstructed_tensor(V, rescale=False)
+        Md = tensor(Zd.data)
+        Md = self.scaler.unscale_tensor(Md, shift=False).data
+        Yd = self.goals._sort_of_hessvec(Md)
+        Zbd = (2*self.a)*Zd + self.b*Yd
+        return Zbd
 
     def compute_diag_blocks(self, M):
         # A helper function, for testing purposes only.
