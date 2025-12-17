@@ -17,8 +17,8 @@ class Goal:
     
     These quantities have the following properties.
 
-        For a Tensor V, val(V) = s + dot(dsdU, U - V) is the first
-        order approximation of G.computeScalar(V) at V=U.
+        For a Tensor V, val(V) = s + dot(dsdU, V - U) is the first
+        order approximation of G.computeScalar(V) at U.
 
         The identity s == np.linalg.norm(vec - G.target, 'fro')**2
         always holds.
