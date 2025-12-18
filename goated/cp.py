@@ -3,87 +3,31 @@ import numpy as np
 import scipy.linalg as la
 from goated.goals.abstract import Goal, PhysicsGoal
 from typing import Optional, Tuple, List, Sequence
+from goated.abstract import LowRankObjective
 
 
-class CPObjective:
+class CPObjective(LowRankObjective):
 
     def __init__(self, X, s=None):
         self.X = X
         self.s = s if s is not None else  self.X.norm()**2
-        self.Mf : Optional[tensor] = None
+        self.M  : ktensor = ktensor()
+        self.Mf : tensor  = tensor()
         self._shape : Tuple[int,...] = X.shape
         self._ndims : int = len(self._shape)
         self._grad : ktensor = ktensor()
-
-    # different between CP and Tucker
-    def update(self, M, prec=True, grad=True) -> None:
-        self.M = M
-        self.Mf = M.full()
-        if prec:
-            self.recompute_prec()
-        if grad:
-            self.recompute_grad()
+    
+    def _forward(self) -> None:
+        self.Mf = self.M.full()
         return
     
-    # same for CP and Tucker
-    def value(self) -> float:
-        Y = self.Mf-self.X
-        F = (Y.norm()**2)/self.s
-        return F
-    
-    # different between CP and Tucker
-    def recompute_grad(self) -> None:
-        Zb : tensor = self._deriv_wrt_reconstructed_tensor()
-        G = ktensor(Zb.mttkrps(self.M))
-        self._grad = G
+    def _backprop(self, Zb: tensor):
+        # one call to the built‐in MTTKRP for each mode
+        return Zb.mttkrps(self.M)
 
-    # same for CP and Tucker; trivial
-    def gradient(self) -> ktensor:
-        return self._grad
+    def _collect_backproped(self, blocks):
+        return ktensor(blocks)
     
-    # different between CP and Tucker
-    def hessvec(self, V: ktensor) -> ktensor:
-        Zbd = self._tangent_reconstructed_tensor(V)
-        Hv_factors = [Zbd.mttkrp(self.M, k) for k in range(self._ndims)]
-        Hv = ktensor(Hv_factors)
-        return Hv
-    
-    # different between CP and Tucker
-    def recompute_prec(self):
-        d = self._ndims
-        A = self.M.factor_matrices
-        r = A[0].shape[1]
-        #  Compute gram matrices
-        S = [A[k].T @ A[k] for k in range(d)]
-        # diagonal factors
-        self.U = np.ones((d,r,r))
-        for k in range(d):
-            for h in range(d):
-                if h != k:
-                    self.U[k,:,:] *= S[h]
-        # cholesky factors
-        self.Vc = [la.cholesky(self.U[k,:,:], lower=False) for k in range(d)]
-        return
-
-    # different between CP and Tucker
-    def precvec(self, V: ktensor) -> ktensor:
-        d = self._ndims
-        #  Gauss-Newton block diagonal preconditioner
-        Ab = V.factor_matrices
-        Pv = []
-        for k in range(d):
-            tmp = la.solve_triangular(self.Vc[k], Ab[k].T, trans='T')
-            tmp = la.solve_triangular(self.Vc[k], tmp, trans='N', overwrite_b=True)
-            Pv.append((self.s/2)*tmp.T)
-        Pv = ktensor(Pv)
-        return Pv
-
-    # same for CP and Tucker
-    def _deriv_wrt_reconstructed_tensor(self) -> tensor:
-        Zb = (2/self.s)*(self.Mf-self.X)
-        return Zb
-    
-    # different between CP and Tucker
     def _tangent_reconstructed_tensor(self, V: ktensor, rescale=True) -> tensor:
         """
         Compute the forward-mode directional derivative of the full CP  
@@ -104,6 +48,35 @@ class CPObjective:
             Zd *= (2.0/self.s)
         
         return Zd  # type: ignore
+    
+    def recompute_prec(self):
+        d = self._ndims
+        A = self.M.factor_matrices
+        r = A[0].shape[1]
+        #  Compute gram matrices
+        S = [A[k].T @ A[k] for k in range(d)]
+        # diagonal factors
+        U = np.ones((d,r,r))
+        for k in range(d):
+            for h in range(d):
+                if h != k:
+                    U[k,:,:] *= S[h]
+        # cholesky factors
+        self.Vc = [la.cholesky(U[k,:,:], lower=False) for k in range(d)]
+        return
+
+    def precvec(self, V: ktensor) -> ktensor:
+        d = self._ndims
+        #  Gauss-Newton block diagonal preconditioner
+        Ab = V.factor_matrices
+        Pv = []
+        for k in range(d):
+            tmp = la.solve_triangular(self.Vc[k], Ab[k].T, trans='T')
+            tmp = la.solve_triangular(self.Vc[k], tmp, trans='N', overwrite_b=True)
+            Pv.append((self.s/2)*tmp.T)
+        Pv = ktensor(Pv)
+        return Pv
+
 
 
 class CPGoals:

@@ -2,13 +2,14 @@ from pyttb import tensor, ttensor  # type: ignore
 import numpy as np
 
 import goated.utils.linops as linops
+from goated.abstract import LowRankObjective
 from collections import defaultdict
 from goated.goals.abstract import Goal, PhysicsGoal
 from typing import Tuple, List, Optional, Sequence
 import time as _time
 
 
-class TuckerObjective:
+class TuckerObjective(LowRankObjective):
 
     def __init__(self, X, s=None):
         self.X = X
@@ -22,65 +23,38 @@ class TuckerObjective:
         self._grad : ttensor = ttensor()
         self.times = defaultdict(list)
 
-    # different between CP and Tucker
-    def update(self, M, prec=True, grad=True) -> None:
-        self.M = M
-        ZZ = M.core.ttm(M.factor_matrices[0], 0)
+    def _forward(self):
+        ZZ : tensor = self.M.core.ttm(self.M.factor_matrices[0], 0) # type: ignore
         self.Z = [ ZZ ]
         for i in range(1,self._ndims):
-            ZZ = ZZ.ttm(M.factor_matrices[i], i)
+            ZZ = ZZ.ttm(self.M.factor_matrices[i], i)
             self.Z.append(ZZ)
         self.Mf = ZZ # the same as M.full().
-        self.Zt = [ M.core.to_tenmat(np.array([0])).data.T ]
+        self.Zt = [ self.M.core.to_tenmat(np.array([0])).data.T ]
         for i in range(1,self._ndims):
             self.Zt.append(self.Z[i-1].to_tenmat(np.array([i])).data.T)
-        if grad:
-            self.recompute_grad()
-        if prec:
-            self.recompute_prec()
-        return
 
-    # same for CP and Tucker
-    def value(self) -> float:
-        Y = self.Mf - self.X
-        F = (Y.norm()**2)/self.s
-        return F
-
-    # different between CP and Tucker
-    def recompute_grad(self) -> None:
-        M = self.M
-        tic = _time.time()
-        Zb = self._deriv_wrt_reconstructed_tensor()
-        Gf : list[np.ndarray] = [None] * self._ndims # type: ignore
+    def _backprop(self, Zb: tensor) -> List:
+        Gf : list[np.ndarray | tensor] = [None] * self._ndims # type: ignore
         # ^ We need to reserve space for Gf since we fill it in reverse order.
         for i in reversed(range(self._ndims)):
             Gf[i] = Zb.to_tenmat(np.array([i])).data @ self.Zt[i]
-            Zb = Zb.ttm(M.factor_matrices[i].T,i)
-        G = ttensor(Zb, Gf)
-        toc = _time.time()
-        self.times['recompute_grad'].append(toc - tic)
-        self._grad = G
-        return
+            Zb = Zb.ttm(self.M.factor_matrices[i].T,i)
+        Gf.append(Zb)
+        return Gf
 
-    # same for CP and Tucker; trivial
-    def gradient(self) -> ttensor:
-        return self._grad
+    def _collect_backproped(self, blocks):
+        return ttensor(blocks[-1], blocks[:-1])
 
-    # different between CP and Tucker
-    def hessvec(self, V: ttensor) -> ttensor:
+    def _tangent_reconstructed_tensor(self, V: ttensor, rescale=True) -> tensor:
         M = self.M
-        tic = _time.time()
-        Zbd = self._tangent_reconstructed_tensor(V)
-        Hv : list[np.ndarray] = [None] * self._ndims # type: ignore
-        for i in reversed(range(self._ndims)):
-            Hv[i] = Zbd.to_tenmat(np.array([i])).data @ self.Zt[i]
-            Zbd = Zbd.ttm(M.factor_matrices[i].T,i)
-        Hv_ten = ttensor(Zbd, Hv)
-        toc = _time.time()
-        self.times['gn_hessvec'].append(toc - tic)
-        return Hv_ten
+        Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
+        for i in range(1, self._ndims):
+            Zd = self.Z[i-1].ttm(V.factor_matrices[i],i) + Zd.ttm(M.factor_matrices[i], i)
+        if rescale:
+            Zd *= 2/self.s
+        return Zd  # type: ignore
 
-    # different between CP and Tucker
     def recompute_prec(self):
         tic = _time.time()
         n = self._ndims
@@ -104,7 +78,6 @@ class TuckerObjective:
         self.times['recompute_bd_prec'].append(toc - tic)
         return
 
-    # different between CP and Tucker
     def precvec(self, V: ttensor) -> ttensor:        
         tic = _time.time()
         Pv = []
@@ -125,21 +98,6 @@ class TuckerObjective:
         toc = _time.time()
         self.times['gn_bd_precvec'].append(toc - tic)
         return Pv
-
-    # same for CP and Tucker
-    def _deriv_wrt_reconstructed_tensor(self) -> tensor:
-        Zb = (2/self.s)*(self.Mf-self.X)
-        return Zb
-
-    # different between CP and Tucker
-    def _tangent_reconstructed_tensor(self, V: ttensor, rescale=True) -> tensor:
-        M = self.M
-        Zd = M.core.ttm(V.factor_matrices[0],0) + V.core.ttm(M.factor_matrices[0],0)
-        for i in range(1, self._ndims):
-            Zd = self.Z[i-1].ttm(V.factor_matrices[i],i) + Zd.ttm(M.factor_matrices[i], i)
-        if rescale:
-            Zd *= 2/self.s
-        return Zd  # type: ignore
 
 
 class TuckerGoals:
