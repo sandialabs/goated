@@ -65,19 +65,25 @@ class PhysicsGoal(Goal):
         i4 = self.time         # subset of arange domain_shape[3]
         self._nonconst_indices : tuple[np.ndarray,...] = np.ix_(i1, i2, i3, i4)
         self.DEBUG = False
-    
-    def computeGrad(self, U : Tensor):
-        vec, jac = self.computeVector(U, compute_deriv=True)
-        # ^ It seems weird that vec.size is a different shape than jac.shape[-1].
-        #   ... what is the derivative with respect to?
-        diff = vec - self.target
-        grad = jac.copy()
+
+    def grad_from_vec_and_jac(self, v, j):
+        diff = v - self.target
+        grad = j.copy()
         grad[self._nonconst_indices] *= 2*np.reshape(diff, (1,1,1) + self.target.shape)
         # Question: can I do away with the self._grad_indices, and just use
         #   broadcast_dims = (1,)*(jac.ndim - self.target.ndim)
         #   jac[:] *= 2*np.reshape(diff, broadcast_dims + self.target.shape)
         # ?
         return grad
+    
+    def computeGrad(self, U : Tensor, use_cached: bool):
+        if use_cached:
+            vec, jac = self.cached_vec, self.cached_jac
+        else:
+            vec, jac = self.computeVector(U, compute_deriv=True)
+            # ^ It seems weird that vec.size is a different shape than jac.shape[-1].
+            #   ... what is the derivative with respect to?
+        return self.grad_from_vec_and_jac(vec, jac)
 
     def _gn_hessvec(self, Md) -> np.ndarray:
         i3 = self.var

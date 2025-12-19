@@ -2,7 +2,7 @@ from pyttb import tensor, ttensor  # type: ignore
 import numpy as np
 
 import goated.utils.linops as linops
-from goated.abstract import LowRankObjective
+from goated.abstractobj import LowRankObjective
 from collections import defaultdict
 from goated.goals.abstract import Goal, PhysicsGoal
 from typing import Tuple, List, Optional, Sequence
@@ -101,6 +101,11 @@ class TuckerObjective(LowRankObjective):
 
 
 class TuckerGoals:
+    """
+    Constituent PhysicsGoal objects define their targets in terms 
+    of the un-scaled tensor, but GotchaObjective works in terms of
+    a scaled tensor. So this class maintains its own scaler.
+    """
 
     def __init__(self, scaler, goals : List[PhysicsGoal], weights : Optional[Sequence[float] | np.ndarray] = None, _shape=None):
         self.scaler = scaler
@@ -113,19 +118,16 @@ class TuckerGoals:
         self._shape : Tuple[int,...] = goals[0].domain_shape
         self._ndim  : int = len(self._shape)
         self._grad  : tensor = tensor()
-        self._diag_hess_factors : list[np.ndarray] = []
         self.jac_times : list[float] = []
-        self.DEBUG = False
+        return
         
-    def update(self, M: ttensor, Mfs: tensor, grad=True, jacs: bool=True, prec=True) -> None:
+    def update(self, M: ttensor, Mf: tensor, grad=True, jacs: bool=True, prec=True) -> None:
         self.M = M
-        self.Mfs = Mfs
-        # self.Mfs = self.scaler.unscale_tensor(M.full())
+        self.Mfs = self.scaler.unscale_tensor(Mf)
         if grad or jacs or prec:
             self.recompute_jacs()
         if grad:
-            self.recompute_grad()
-            # ^ That needs to come after recompute_jacs().
+            self.recompute_grad(use_cached_jacs=True)
         return
     
     def recompute_jacs(self) -> None:
@@ -134,7 +136,6 @@ class TuckerGoals:
             vec, jac = g.computeVector(self.Mfs, compute_deriv=True)
             g.cached_vec = vec
             g.cached_jac = jac
-            # ^ That caches the goal's value and Jacobian for future use.
             toc = _time.time()
             self.jac_times.append(toc - tic)
         return
@@ -145,10 +146,10 @@ class TuckerGoals:
             F += w * g.computeScalar(self.Mfs)
         return F
     
-    def recompute_grad(self) -> None:
+    def recompute_grad(self, use_cached_jacs: bool) -> None:
         Yg = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
-            Yg += w * g.computeGrad(self.Mfs)
+            Yg += w * g.computeGrad(self.Mfs, use_cached_jacs)
         Yg = tensor(Yg)
         Yg = self.scaler.unscale_tensor(Yg, shift=False)
         self._grad : tensor = Yg
@@ -178,13 +179,6 @@ class TuckerGoals:
         self.weights = 1 / (v * len(self.goals))
         return
 
-    def gn_diag_block_goal_updates(self) -> list[np.ndarray]:
-        factor_cols = [[] for _ in range(self._ndim + 1)]
-        for w, g in zip(self.weights, self.goals):
-            g._tucker_gn_block_diag_goal_updates(w, self.M, self.scaler, factor_cols)
-        factors = [np.column_stack(cols) for cols in factor_cols]
-        return factors
-
 
 class GotchaObjective(TuckerObjective):
 
@@ -200,10 +194,9 @@ class GotchaObjective(TuckerObjective):
 
     def update(self, M, prec=True, grad=True):
         super().update(M, grad=False, prec=False)
-        self.Mfs = self.scaler.unscale_tensor(self.Mf)
         jac_times = []
         self.goals.update(
-            self.M, self.Mfs,
+            self.M, self.Mf,
             grad=(prec or grad),
             jacs=(prec or grad)
         )
@@ -227,11 +220,18 @@ class GotchaObjective(TuckerObjective):
         # which we've reimplemented.
         super().recompute_grad()
         return
+    
+    def gn_diag_block_goal_updates(self) -> list[np.ndarray]:
+        factor_cols = [[] for _ in range(self.goals._ndim + 1)]
+        for w, g in zip(self.goals.weights, self.goals.goals):
+            g._tucker_gn_block_diag_goal_updates(w, self.M, self.scaler, factor_cols)
+        factors = [np.column_stack(cols) for cols in factor_cols]
+        return factors
 
     def recompute_prec(self) -> None:
         M = self.M
         tic = _time.time()
-        goal_panels = self.goals.gn_diag_block_goal_updates()
+        goal_panels = self.gn_diag_block_goal_updates()
         goal_panels[0] *= np.sqrt(self.b)
         toc = _time.time()
         self.times['gn_diag_block_goal_updates'].append(toc - tic)
@@ -275,13 +275,21 @@ class GotchaObjective(TuckerObjective):
         Zbd = (2*self.a)*Zd + self.b*Yd
         return Zbd
 
-    def compute_diag_blocks(self, M):
+    def compute_diag_blocks(self, M=None):
         # A helper function, for testing purposes only.
         # Computes the diagonal blocks of the Gauss-Newton Hessian with respect to the factor matrices
         # 
+        M0 = self.M
+        if M is None:
+            M = M0
+            restore = False
+        else:
+            restore = True
+            self.update(M, True, True)
+
         S = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(self._ndims)]
         C = []
-        goal_updates = self.goals.gn_diag_block_goal_updates()
+        goal_updates = self.gn_diag_block_goal_updates()
 
         for n in range(self._ndims):
             D = np.array([1])
@@ -300,5 +308,8 @@ class GotchaObjective(TuckerObjective):
         D = (2*self.a) * D
         D += goal_updates[-1] @ goal_updates[-1].T
         C.append(D)
+        
+        if restore:
+            self.update(M0, True, True)
 
         return C

@@ -2,8 +2,8 @@ from pyttb import tensor, ktensor  # type: ignore
 import numpy as np
 import scipy.linalg as la
 from goated.goals.abstract import Goal, PhysicsGoal
-from typing import Optional, Tuple, List, Sequence
-from goated.abstract import LowRankObjective
+from typing import Optional, Tuple, List, Sequence, Optional
+from goated.abstractobj import LowRankObjective
 
 
 class CPObjective(LowRankObjective):
@@ -80,6 +80,12 @@ class CPObjective(LowRankObjective):
 
 
 class CPGoals:
+    """
+    Constituent PhysicsGoal objects define their targets in terms 
+    of the un-scaled tensor, but GocchaObjective works in terms of
+    a scaled tensor. So this class maintains its own scaler.
+    """
+
 
     def __init__(self, scaler, goals : List[PhysicsGoal], weights : Optional[Sequence[float] | np.ndarray] = None):
         assert len(goals) > 0
@@ -90,25 +96,25 @@ class CPGoals:
         elif not isinstance(weights, np.ndarray):
             weights = np.array(weights)
         self.weights : np.ndarray = weights
-        self.Mf : tensor  = tensor()
-        self.Ms : ktensor = ktensor()
+        self.M : Optional[ktensor] = None
+        self.Mfs : tensor  = tensor()
         self._shape : Tuple[int,...] = goals[0].domain_shape
         self._ndim  : int = len(self._shape)
-        self._grad  : ktensor = ktensor()
+        self._grad  : tensor = tensor()
+        return
         
-    def update(self, M : ktensor, grad=True, jacs=True):
-        self.Mf = self.scaler.unscale_tensor(M.full())
-        self.Ms = self.scaler.unscale_ktensor(M)
-        assert self.Mf.shape == self._shape
-        assert self.Ms.shape == self._shape
-        if grad:
-            self.recompute_grad()
-        if jacs:
+    def update(self, M : ktensor, Mf: tensor, grad=True, jacs=True):
+        self.M = M  # not used in the current implementation.
+        self.Mfs = self.scaler.unscale_tensor(Mf)
+        if grad or jacs:
             self.recompute_jacs()
+        if grad:
+            self.recompute_grad(use_cached_jacs=True)
+        return
 
     def recompute_jacs(self) -> None:
         for _,g in zip(self.weights,self.goals):
-            val, jac = g.computeVector(self.Mf, compute_deriv=True)
+            val, jac = g.computeVector(self.Mfs, compute_deriv=True)
             g.cached_vec = val
             g.cached_jac = jac
         return
@@ -117,16 +123,17 @@ class CPGoals:
     def value(self) -> float:
         F = 0
         for w,g in zip(self.weights, self.goals):
-            F += w * g.computeScalar(self.Mf)
+            F += w * g.computeScalar(self.Mfs)
         return F
 
-    def recompute_grad(self):
-        Y = np.zeros(self._shape)
+    def recompute_grad(self, use_cached_jacs: bool) -> None:
+        Yg = np.zeros(self._shape)
         for w,g in zip(self.weights, self.goals):
-            Y += w * g.computeGrad(self.Mf)
-        Y = tensor(Y)
-        Y = self.scaler.unscale_tensor(Y, shift=False)
-        self._grad = Y
+            Yg += w * g.computeGrad(self.Mfs, use_cached_jacs)
+        Yg = tensor(Yg)
+        Yg = self.scaler.unscale_tensor(Yg, shift=False)
+        self._grad : tensor = Yg
+        return
 
     # same for CP and Tucker; trivial
     def gradient_wrt_reconstruction(self):
@@ -164,7 +171,7 @@ class GocchaObjective(CPObjective):
         
     def update(self, M: ktensor, grad=True, prec=True):
         super().update(M, prec=prec, grad=False)
-        self.goals.update(M, grad=True, jacs=True)
+        self.goals.update(M, self.Mf, grad=True, jacs=True)
         if grad:
             self.recompute_grad()
         
