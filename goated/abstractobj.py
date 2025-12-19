@@ -13,20 +13,20 @@ class LowRankObjective(ABC):
     Subclasses must implement:
       _forward()                fill in self.Mf (full tensor) and any extra caches,
       _backprop(Zb) → List[...]  take a full-tensor Zb and return list of factor-gradient blocks,
-      recompute_prec()           build self.C so that precvec(V) uses it,
-    and can override:
       _tangent_reconstructed_tensor(V)
+    and can override:
       _deriv_wrt_reconstructed_tensor()
+      recompute_prec()
     """
-    def __init__(self, X, s=None):
+    def __init__(self, X: tensor, s=None):
         self.X     = X
         self.s     = s if s is not None else X.norm()**2
         self.M     = None           # filled by update()
-        self.Mf    = None           # full-tensor, filled by _forward
+        self.Mf    = tensor()       # full-tensor, filled by _forward
         self._grad = None
-        self.C     = None           # block-diag precond (format depends on subclass)
+        return
 
-    def update(self, M, *, grad=True, prec=True) -> None:
+    def update(self, M: LowRankTensor_t, *, grad=True, prec=True) -> None:
         self.M = M
         self._forward()
         if grad:
@@ -36,9 +36,35 @@ class LowRankObjective(ABC):
         return
 
     @abstractmethod
-    def _forward(self):
-        """ Given the low-rank self.M, fill in self.Mf and any pre-computed
-            intermediates needed by _backprop(). """
+    def _forward(self) -> None:
+        """
+        Given the low-rank self.M, fill in self.Mf and any pre-computed
+        intermediates needed by _backprop().
+        """
+        pass
+
+    @abstractmethod
+    def _tangent_reconstructed_tensor(self, V: LowRankTensor_t) -> tensor:
+        """ 
+        TODO: write docstring
+        """
+        pass
+
+    @abstractmethod
+    def _backprop(self, Zb) -> List:
+        """
+        Given an adjoint/full-tensor Zb, return a list of arrays
+        corresponding to the derivative blocks for each factor (and
+        core if needed).
+        """
+        pass
+
+    @abstractmethod
+    def _collect_backproped(self, blocks) -> LowRankTensor_t:
+        """
+        Given the list of factor-gradients (and maybe a core-grad),
+        assemble them into the same ttensor/ktensor-type as self.M.
+        """
         pass
 
     def value(self) -> float:
@@ -54,10 +80,10 @@ class LowRankObjective(ABC):
         # 3) package into the same low-rank format as self.M
         self._grad = self._collect_backproped(blocks)
 
-    def gradient(self):
-        return self._grad
+    def gradient(self) -> LowRankTensor_t:
+        return self._grad # type: ignore
 
-    def hessvec(self, V):
+    def hessvec(self, V: LowRankTensor_t) -> LowRankTensor_t:
         # 1) forward-mode: directional derivative of the recon
         Zbd = self._tangent_reconstructed_tensor(V)
         # 2) back-propagate into factor space
@@ -65,38 +91,15 @@ class LowRankObjective(ABC):
         # 3) package
         return self._collect_backproped(blocks)
 
-    def precvec(self, V):
-        # just delegate to block-diag preconditioner built in recompute_prec()
-        raise NotImplementedError()
+    def precvec(self, V: LowRankTensor_t) -> LowRankTensor_t:
+        return V
 
-    def _deriv_wrt_reconstructed_tensor(self):
+    def _deriv_wrt_reconstructed_tensor(self) -> tensor:
         # default for least squares term:  (2/s)*(Mf - X)
         return (2.0/self.s)*(self.Mf - self.X)
 
-    def _tangent_reconstructed_tensor(self, V):
-        # default is: nothing!  subclasses can override to do
-        # the “tangent of full-reconstruction” step
-        raise NotImplementedError()
-
-    @abstractmethod
-    def _backprop(self, Zb) -> List:
-        """
-        Given an adjoint/full-tensor Zb, return a list of arrays
-        corresponding to the derivative blocks for each factor (and
-        core if needed).
-        """
-        pass
-
-    @abstractmethod
-    def _collect_backproped(self, blocks):
-        """
-        Given the list of factor-gradients (and maybe a core-grad),
-        assemble them into the same ttensor/ktensor-type as self.M.
-        """
-        pass
-
-    @abstractmethod
-    def recompute_prec(self):
-        """ Build self.C so that _apply_prec(V) can solve each block. """
-        pass
+    def recompute_prec(self) -> None:
+        # The default preconditioner is trivial, so there's
+        # no work to be done here.
+        return
 
