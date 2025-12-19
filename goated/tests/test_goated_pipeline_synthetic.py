@@ -89,7 +89,7 @@ def test_goated_pipeline_synthetic(nx=5, ny=5, nvar=5, nt=5, rank_approx=1):
     b = 1.0
     Xs = scaler.scale_tensor(X_tt)
     from goated.tucker import TuckerObjective, GotchaObjective
-    gotcha = GotchaObjective(Xs, scaler, goals, a, b)
+    gotcha = GotchaObjective(Xs, goals, a, b)
 
     # 6) Get an initial Tucker decomposition (just the trivial rank‐1 HOSVD)
     #    Note: we use the built‐in ttensor.hosvd to full HOSVD and then truncate

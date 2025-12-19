@@ -56,7 +56,7 @@ ng = len(goals.goals)+1
 a = 1/(ng*((Xs-us0.full()).norm()**2))
 b = 1.0
 goals.auto_reweight(U0)
-gotcha = GotchaObjective(Xs, scaler, goals, a, b)
+gotcha = GotchaObjective(Xs, goals, a, b)
 
 problem = rolm.GoatedRolModel(gotcha, us0)
 problem.solve()
