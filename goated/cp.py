@@ -83,7 +83,6 @@ class GocchaObjective(CPObjective):
     def __init__(self, X, goals : CPGoals, a, b):
         super().__init__(X, s=1.0)
         self.goals  = goals
-        self.scaler = goals.scaler
         self.a = a
         self.b = b
         
@@ -123,7 +122,6 @@ class GocchaObjective(CPObjective):
     def _tangent_reconstructed_tensor(self, V) -> tensor:
         Zd = super()._tangent_reconstructed_tensor(V, rescale=False)
         Md = tensor(Zd.data)
-        Md = self.scaler.unscale_tensor(Md, shift=False).data
         Yd = self.goals.hessvec_wrt_reconstruction(Md)
         Zbd = (2*self.a)*Zd + self.b*Yd
         return Zbd

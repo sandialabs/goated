@@ -107,7 +107,6 @@ class GotchaObjective(TuckerObjective):
 
     def __init__(self, X,  goals : TuckerGoals, a, b, jacobi=True):
         super().__init__(X, s=1.0)
-        self.scaler = goals.scaler # Why not inherit self.scaler from goals.scaler ?
         self.goals = goals
         self.a = a
         self.b = b
@@ -144,7 +143,7 @@ class GotchaObjective(TuckerObjective):
     def gn_diag_block_goal_updates(self) -> list[np.ndarray]:
         factor_cols = [[] for _ in range(self.goals._ndim + 1)]
         for w, g in zip(self.goals.weights, self.goals.goals):
-            g._tucker_gn_block_diag_goal_updates(w, self.M, self.scaler, factor_cols)
+            g._tucker_gn_block_diag_goal_updates(w, self.M, self.goals.scaler, factor_cols)
         factors = [np.column_stack(cols) for cols in factor_cols]
         return factors
 
@@ -221,7 +220,6 @@ class GotchaObjective(TuckerObjective):
     def _tangent_reconstructed_tensor(self, V: ttensor) -> tensor:
         Zd = super()._tangent_reconstructed_tensor(V, rescale=False)
         Md = tensor(Zd.data)
-        Md = self.scaler.unscale_tensor(Md, shift=False).data
         Yd = self.goals.hessvec_wrt_reconstruction(Md)
         Zbd = (2*self.a)*Zd + self.b*Yd
         return Zbd

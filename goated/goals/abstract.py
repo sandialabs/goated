@@ -211,7 +211,7 @@ class Goals:
         return self._grad
 
     def hessvec_wrt_reconstruction(self, Md: tensor) -> tensor:
-        # Md = self.scaler.unscale_tensor(Md, shift=False).data
+        Md = self.scaler.unscale_tensor(Md, shift=False).data
         Yd = np.zeros(self._shape, order='F')
         for w,g in zip(self.weights, self.goals):
             jac_dot = g._gn_hessvec(Md)
