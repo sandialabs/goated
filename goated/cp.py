@@ -1,7 +1,7 @@
 from pyttb import tensor, ktensor  # type: ignore
 import numpy as np
 import scipy.linalg as la
-from goated.goals.abstract import Goal, PhysicsGoal
+from goated.goals.abstract import Goal, PhysicsGoal, CPGoals
 from typing import Optional, Tuple, List, Sequence, Optional
 from goated.abstractobj import LowRankObjective
 
@@ -78,88 +78,6 @@ class CPObjective(LowRankObjective):
         return Pv
 
 
-
-class CPGoals:
-    """
-    Constituent PhysicsGoal objects define their targets in terms 
-    of the un-scaled tensor, but GocchaObjective works in terms of
-    a scaled tensor. So this class maintains its own scaler.
-    """
-
-
-    def __init__(self, scaler, goals : List[PhysicsGoal], weights : Optional[Sequence[float] | np.ndarray] = None):
-        assert len(goals) > 0
-        self.scaler = scaler
-        self.goals = goals
-        if weights is None:
-            weights = np.ones((len(goals),), dtype=float)
-        elif not isinstance(weights, np.ndarray):
-            weights = np.array(weights)
-        self.weights : np.ndarray = weights
-        self.M : Optional[ktensor] = None
-        self.Mfs : tensor  = tensor()
-        self._shape : Tuple[int,...] = goals[0].domain_shape
-        self._ndim  : int = len(self._shape)
-        self._grad  : tensor = tensor()
-        return
-        
-    def update(self, M : ktensor, Mf: tensor, grad=True, jacs=True):
-        self.M = M  # not used in the current implementation.
-        self.Mfs = self.scaler.unscale_tensor(Mf)
-        if grad or jacs:
-            self.recompute_jacs()
-        if grad:
-            self.recompute_grad(use_cached_jacs=True)
-        return
-
-    def recompute_jacs(self) -> None:
-        for _,g in zip(self.weights,self.goals):
-            val, jac = g.computeVector(self.Mfs, compute_deriv=True)
-            g.cached_vec = val
-            g.cached_jac = jac
-        return
-
-    # same for CP and Tucker
-    def value(self) -> float:
-        F = 0
-        for w,g in zip(self.weights, self.goals):
-            F += w * g.computeScalar(self.Mfs)
-        return F
-
-    def recompute_grad(self, use_cached_jacs: bool) -> None:
-        Yg = np.zeros(self._shape)
-        for w,g in zip(self.weights, self.goals):
-            Yg += w * g.computeGrad(self.Mfs, use_cached_jacs)
-        Yg = tensor(Yg)
-        Yg = self.scaler.unscale_tensor(Yg, shift=False)
-        self._grad : tensor = Yg
-        return
-
-    # same for CP and Tucker; trivial
-    def gradient_wrt_reconstruction(self):
-        return self._grad
-
-    # same for CP and Tucker
-    def _sort_of_hessvec(self, Md: tensor) -> tensor:
-        Yd = np.zeros(self._shape, order='F')
-        for w,g in zip(self.weights, self.goals):
-            jac_dot = g._gn_hessvec(Md)
-            Yd += w*jac_dot
-        Yd = self.scaler.unscale_tensor(Yd, shift=False)
-        return Yd
-
-    def eval_goals(self, U: tensor, scaled=False):   
-        if scaled:
-            U = self.scaler.unscale_tensor(U)
-        v = np.array([g.computeScalar(U) for g in self.goals])
-        return v 
-
-    def auto_reweight(self, U: tensor, scaled=False):
-        v = self.eval_goals(U, scaled=scaled)
-        self.weights = 1 / (v * len(self.goals))
-        return
-
-
 class GocchaObjective(CPObjective):
 
     def __init__(self, X, goals : CPGoals, a, b):
@@ -202,6 +120,6 @@ class GocchaObjective(CPObjective):
         Zd = super()._tangent_reconstructed_tensor(V, rescale=False)
         Md = tensor(Zd.data)
         Md = self.scaler.unscale_tensor(Md, shift=False).data
-        Yd = self.goals._sort_of_hessvec(Md)
+        Yd = self.goals.hessvec_wrt_reconstruction(Md)
         Zbd = (2*self.a)*Zd + self.b*Yd
         return Zbd

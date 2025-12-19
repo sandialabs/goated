@@ -1,7 +1,11 @@
 
 from abc import ABC, abstractmethod
-from pyttb import tensor
-from typing import List, Tuple
+from pyttb import tensor, ttensor, ktensor
+from typing import List, Tuple, TypeVar
+
+
+LowRankTensor_t = TypeVar('LowRankTensor_t', ktensor, ttensor)
+
 
 class LowRankObjective(ABC):
     """

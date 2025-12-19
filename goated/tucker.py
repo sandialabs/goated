@@ -4,7 +4,7 @@ import numpy as np
 import goated.utils.linops as linops
 from goated.abstractobj import LowRankObjective
 from collections import defaultdict
-from goated.goals.abstract import Goal, PhysicsGoal
+from goated.goals.abstract import Goal, PhysicsGoal, TuckerGoals
 from typing import Tuple, List, Optional, Sequence
 import time as _time
 
@@ -100,91 +100,11 @@ class TuckerObjective(LowRankObjective):
         return Pv
 
 
-class TuckerGoals:
-    """
-    Constituent PhysicsGoal objects define their targets in terms 
-    of the un-scaled tensor, but GotchaObjective works in terms of
-    a scaled tensor. So this class maintains its own scaler.
-    """
-
-    def __init__(self, scaler, goals : List[PhysicsGoal], weights : Optional[Sequence[float] | np.ndarray] = None, _shape=None):
-        self.scaler = scaler
-        self.goals = goals
-        if weights is None:
-            weights = np.ones((len(self.goals),))
-        self.weights = weights
-        self.M   : ttensor = ttensor()
-        self.Mfs : tensor  = tensor()
-        self._shape : Tuple[int,...] = goals[0].domain_shape
-        self._ndim  : int = len(self._shape)
-        self._grad  : tensor = tensor()
-        self.jac_times : list[float] = []
-        return
-        
-    def update(self, M: ttensor, Mf: tensor, grad=True, jacs: bool=True, prec=True) -> None:
-        self.M = M
-        self.Mfs = self.scaler.unscale_tensor(Mf)
-        if grad or jacs or prec:
-            self.recompute_jacs()
-        if grad:
-            self.recompute_grad(use_cached_jacs=True)
-        return
-    
-    def recompute_jacs(self) -> None:
-        for _, g in zip(self.weights, self.goals):
-            tic = _time.time()
-            vec, jac = g.computeVector(self.Mfs, compute_deriv=True)
-            g.cached_vec = vec
-            g.cached_jac = jac
-            toc = _time.time()
-            self.jac_times.append(toc - tic)
-        return
-
-    def value(self) -> float:
-        F = 0.0
-        for w,g in zip(self.weights, self.goals):
-            F += w * g.computeScalar(self.Mfs)
-        return F
-    
-    def recompute_grad(self, use_cached_jacs: bool) -> None:
-        Yg = np.zeros(self._shape)
-        for w,g in zip(self.weights, self.goals):
-            Yg += w * g.computeGrad(self.Mfs, use_cached_jacs)
-        Yg = tensor(Yg)
-        Yg = self.scaler.unscale_tensor(Yg, shift=False)
-        self._grad : tensor = Yg
-        return
-
-    # same for CP and Tucker; trivial
-    def gradient_wrt_reconstruction(self) -> tensor:
-        return self._grad
-    
-    # same for CP and Tucker
-    def _sort_of_hessvec(self, Md: tensor) -> tensor:
-        Yd = np.zeros(self._shape, order='F')
-        for w,g in zip(self.weights, self.goals):
-            jac_dot = g._gn_hessvec(Md)
-            Yd += w*jac_dot
-        Yd = self.scaler.unscale_tensor(Yd, shift=False)
-        return Yd
-
-    def eval_goals(self, U: tensor, scaled=False) -> np.ndarray:   
-        if scaled:
-            U = self.scaler.unscale_tensor(U)
-        v = np.array([g.computeScalar(U) for g in self.goals])
-        return v 
-
-    def auto_reweight(self, U: tensor, scaled=False) -> None:
-        v = self.eval_goals(U, scaled=scaled)
-        self.weights = 1 / (v * len(self.goals))
-        return
-
-
 class GotchaObjective(TuckerObjective):
 
-    def __init__(self, X, scaler, goals : TuckerGoals, a, b, jacobi=True):
+    def __init__(self, X,  goals : TuckerGoals, a, b, jacobi=True):
         super().__init__(X, s=1.0)
-        self.scaler = scaler # Why not inherit self.scaler from goals.scaler ?
+        self.scaler = goals.scaler # Why not inherit self.scaler from goals.scaler ?
         self.goals = goals
         self.a = a
         self.b = b
@@ -271,7 +191,7 @@ class GotchaObjective(TuckerObjective):
         Zd = super()._tangent_reconstructed_tensor(V, rescale=False)
         Md = tensor(Zd.data)
         Md = self.scaler.unscale_tensor(Md, shift=False).data
-        Yd = self.goals._sort_of_hessvec(Md)
+        Yd = self.goals.hessvec_wrt_reconstruction(Md)
         Zbd = (2*self.a)*Zd + self.b*Yd
         return Zbd
 
