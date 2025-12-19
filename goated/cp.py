@@ -21,11 +21,11 @@ class CPObjective(LowRankObjective):
         self.Mf = self.M.full()
         return
     
-    def _backprop(self, Zb: tensor):
+    def _backprop(self, Zb: tensor) -> List:
         # one call to the built‐in MTTKRP for each mode
         return Zb.mttkrps(self.M)
 
-    def _collect_backproped(self, blocks):
+    def _collect_backproped(self, blocks) -> ktensor:
         return ktensor(blocks)
     
     def _tangent_reconstructed_tensor(self, V: ktensor, rescale=True) -> tensor:
@@ -49,7 +49,7 @@ class CPObjective(LowRankObjective):
         
         return Zd  # type: ignore
     
-    def recompute_prec(self):
+    def recompute_prec(self) -> None:
         d = self._ndims
         A = self.M.factor_matrices
         r = A[0].shape[1]
@@ -87,9 +87,13 @@ class GocchaObjective(CPObjective):
         self.a = a
         self.b = b
         
-    def update(self, M: ktensor, grad=True, prec=True):
+    def update(self, M: ktensor, grad=True, prec=True) -> None:
         super().update(M, prec=prec, grad=False)
-        self.goals.update(M, self.Mf, grad=True, jacs=True)
+        self.goals.update(
+            self.M, self.Mf,
+            grad=(prec or grad),
+            jacs=(prec or grad)
+        )
         if grad:
             self.recompute_grad()
         

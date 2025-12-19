@@ -23,7 +23,7 @@ class TuckerObjective(LowRankObjective):
         self._grad : ttensor = ttensor()
         self.times = defaultdict(list)
 
-    def _forward(self):
+    def _forward(self) -> None:
         ZZ : tensor = self.M.core.ttm(self.M.factor_matrices[0], 0) # type: ignore
         self.Z = [ ZZ ]
         for i in range(1,self._ndims):
@@ -43,7 +43,7 @@ class TuckerObjective(LowRankObjective):
         Gf.append(Zb)
         return Gf
 
-    def _collect_backproped(self, blocks):
+    def _collect_backproped(self, blocks) -> ttensor:
         return ttensor(blocks[-1], blocks[:-1])
 
     def _tangent_reconstructed_tensor(self, V: ttensor, rescale=True) -> tensor:
@@ -55,21 +55,26 @@ class TuckerObjective(LowRankObjective):
             Zd *= 2/self.s
         return Zd  # type: ignore
 
-    def recompute_prec(self):
+    def recompute_prec(self) -> None:
         tic = _time.time()
         n = self._ndims
         M = self.M
         grams = [M.factor_matrices[k].T @ M.factor_matrices[k] for k in range(n)]
         self.C = []
         for k in range(n):
+            # construct a linear operator that can act as the inverse of the diagonal
+            # block in our Gauss-Newton Hessian that corresponds to the k-th non-core
+            # ttensor factor.
             D = np.array([1])
             for i in reversed(range(n)):
                 if i != k:
                     D = np.kron(D, grams[i])
             G = M.core.to_tenmat(np.array([k])).data
-            D = (2/self.s) * G @ D @ G.T
-            block = linops.InvPosDef(D)
+            DG = (2/self.s) * G @ D @ G.T
+            block = linops.InvPosDef(DG)
             self.C.append(block)
+        # construct an implicit inverse of the diagonal block in the Gauss-Newton Hessian
+        # that corresponds to the ttensor's core factor.
         grams[0] *= (2/self.s)
         kron_args = [linops.InvPosDef(gram) for gram in grams[::-1]]
         B = linops.KronStructured.recursive_dyadic(kron_args)
@@ -84,11 +89,9 @@ class TuckerObjective(LowRankObjective):
         for k in range(self._ndims):
             Ck = self.C[k]
             Vk = V.factor_matrices[k]
-            try:
-                Pvk = Vk @ Ck
-            except ValueError:
-                Pvk = Ck @ Vk.ravel(order='F')
-                Pvk = Pvk.reshape(Vk.shape, order='F')
+            Pvk = Vk @ Ck
+            # ^ That's equivalent to vec(Pvk) := (Ck \tensor Ik) vec(Vk), where I_k
+            #   is the identity matrix of size equal to the number of columns in Vk.
             Pv.append(Pvk)
 
         Pvc = V.core.data.ravel(order='F')
@@ -124,13 +127,10 @@ class GotchaObjective(TuckerObjective):
         if grad:
             self.recompute_grad()
         if prec:
-            if self.jacobi:
-                self.recompute_prec()
-            else:
-                super().recompute_prec()
+            self.recompute_prec()
         return
         
-    def value(self):
+    def value(self) -> float:
         F  = self.a * super().value()
         F += self.b * self.goals.value()
         return F
@@ -149,6 +149,9 @@ class GotchaObjective(TuckerObjective):
         return factors
 
     def recompute_prec(self) -> None:
+        if not self.jacobi:
+            super().recompute_prec()
+            return
         M = self.M
         tic = _time.time()
         goal_panels = self.gn_diag_block_goal_updates()
@@ -166,6 +169,13 @@ class GotchaObjective(TuckerObjective):
             G = M.core.to_tenmat(np.array([k])).data
             D = (2*self.a) * G @ D @ G.T
             block = linops.InvUpdatedKronPosDef([D, np.eye(self._shape[k])], goal_panels[k])
+            # ^ That operator acts via left-multiplication on VECTORIZED non-core ttensor factors;
+            #   this is in contrast to the operators in TuckerObjective.recompute_prec, which end
+            #   up acting via right-multiplication on non-core ttensor factors without vectorization.
+            #   
+            #   The behavior of TuckerObjective's recompute_prec and precvec is equivalent to what
+            #   we do here (and in GotchaObjective.precvec) when goal_panels[k] is zero.
+            #
             self.C.append(block)
         grams[0] *= (2*self.a)
         kron_args = grams[::-1]
@@ -176,6 +186,27 @@ class GotchaObjective(TuckerObjective):
         self.block_jacobi_ops_cache.append([op for op in self.C])
         return
     
+    def precvec(self, V: ttensor) -> ttensor:        
+        tic = _time.time()
+        if not self.jacobi:
+            return super().precvec(V)
+        Pv = []
+        for k in range(self._ndims):
+            Ck = self.C[k]
+            Vk = V.factor_matrices[k]
+            Pvk = Ck @ Vk.ravel(order='F')
+            Pvk = Pvk.reshape(Vk.shape, order='F')
+            Pv.append(Pvk)
+
+        # The following lines are duplicated with TuckerObjective.precvec.
+        Pvc = V.core.data.ravel(order='F')
+        Pvc = self.C[-1] @ Pvc
+        Pvc = Pvc.reshape(V.core.shape, order='F')
+        Pv  = ttensor(tensor(Pvc), Pv)
+        toc = _time.time()
+        self.times['gn_bd_precvec'].append(toc - tic)
+        return Pv
+ 
     def hessvec(self, V: ttensor) -> ttensor:
         # Parent class implementation relies on self._tangent_reconstructed_tensor,
         # which we've reimplemented.
@@ -195,7 +226,9 @@ class GotchaObjective(TuckerObjective):
         Zbd = (2*self.a)*Zd + self.b*Yd
         return Zbd
 
-    def compute_diag_blocks(self, M=None):
+    # Methods for debugging
+
+    def compute_diag_blocks(self, M=None) -> List[np.ndarray]:
         # A helper function, for testing purposes only.
         # Computes the diagonal blocks of the Gauss-Newton Hessian with respect to the factor matrices
         # 
