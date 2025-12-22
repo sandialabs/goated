@@ -76,6 +76,16 @@ class PhysicsGoal(Goal):
         # ?
         return grad
     
+    def computeVector(self, U : Tensor, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        TODO: document the meaning of "jac" in the returned pair (vec, jac), to be consistent
+        with self.grad_from_vec_and_jac(...).
+
+        (There is no default implementation for PhysicsGoal, but there should be documentation
+         explaining what conformant implementations do.)
+        """
+        raise NotImplementedError()
+
     def computeGrad(self, U : Tensor, use_cached: bool):
         if use_cached:
             vec, jac = self.cached_vec, self.cached_jac
