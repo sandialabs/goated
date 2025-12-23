@@ -1,7 +1,7 @@
 from pyttb import tensor, ktensor  # type: ignore
 import numpy as np
 import scipy.linalg as la
-from goated.goals.abstract import Goal, PhysicsGoal, CPGoals
+from goated.goals.abstract import CPGoals
 from typing import Optional, Tuple, List, Sequence, Optional
 from goated.abstractobj import LowRankObjective
 
@@ -115,8 +115,8 @@ class GocchaObjective(CPObjective):
 
     def _deriv_wrt_reconstructed_tensor(self) -> tensor:
         Yg = self.goals.gradient_wrt_reconstruction()
-        Y = self.Mf - self.X
-        Zb = (2*self.a)*Y + self.b*Yg
+        Y = 2*(self.Mf - self.X)
+        Zb = self.a*Y + self.b*Yg
         return Zb
     
     def _tangent_reconstructed_tensor(self, V) -> tensor:

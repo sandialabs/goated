@@ -1,41 +1,70 @@
 import numpy as np
-from typing import Tuple
+from numpy.typing import ArrayLike
 from pyttb import tensor, ttensor, ktensor  # type: ignore
-from typing import TypeAlias, Tuple, List, Optional, Sequence
+from typing import TypeAlias, Tuple, List, Optional, Sequence, Any
+from abc import ABC, abstractmethod
 
 Tensor : TypeAlias = tensor | ttensor | ktensor
 
 
-class Goal:
+class Goal(ABC):
     """
-    Let G = Goal(ground_truth, **kwargs). For a Tensor U and a
-    boolean flag, let
-
-        (*) s          = G.computeScalar(U),       and
-        (*) (vec, jac) = G.computeVector(U, flag), and
-        (*) dsdU       = G.computeGrad(U).
+    An abstract nonlinear least squares term in the objective of a
+    minimization problem over tensors.
     
-    These quantities have the following properties.
+    Concrete child classes must implement computeVector and adjoint_jvp.
+    We describe the semantics of these abstract functions in terms of a
+    hypothetical object G = Goal(ground_truth, **kwargs).
 
-        For a Tensor V, val(V) = s + dot(dsdU, V - U) is the first
-        order approximation of G.computeScalar(V) at U.
+    Bare basics
+    -----------
+    For a Tensor U of shape G.domain_shape, the following expressions
+    are well-formed: 
 
-        The identity s == np.linalg.norm(vec - G.target, 'fro')**2
-        always holds.
+        (vec, jac) = G.computeVector( U, compute_deriv=True )
+        s          = G.computeScalar( U )
+        dsdU       = G.adjoint_jvp( jac, vec - G.target  )
 
-        If flag is True, then jac.shape == G.domain_shape, and jac
-        is an array that can be used in certain ways to compute
-        vector products with the Hessian of G.computeScalar(U).
+    The returned values should have the following properties:
+
+      (1) s is the squared Frobenius norm of vec - G.target.
+      (2) dsdU is the gradient of G.computeScalar at U.
+
+    Conceptually, jac should be some representation of the Jacobian
+    of the map from U to vec. G.adjoint_jvp should be a bilinear 
+    function that implements the matrix-vector product between the
+    adjoint of the given Jacobian and the given vector.
+
+    NOTE: The instance variable G.target is set automatically during
+    the call to Goal.__init__(self, ground_truth ).
+
+    Being efficient
+    ---------------
+    For a Tensor U of shape G.domain_shape, the expression
+
+        (vec, jac) = G.computeVector( U, compute_deriv=False )
+
+    must be well-formed. However, in this case, no other requirements
+    are placed on jac (it's valid to return jac==None).
+
+    The object G has instance variables G.cached_jac and G.cached_vec
+    where calling code can choose to save results from a previous
+    call to G.computeVector(*, compute_deriv=True ).
     """
 
     def __init__(self, ground_truth : Tensor, **kwargs) -> None:
         self.domain_shape = ground_truth.shape
         self.cached_vec  : np.ndarray = np.empty(())
-        self.cached_jac  : np.ndarray = np.empty(())
+        self.cached_jac  : Optional[Any] = None
         self.target, _ = self.computeVector(ground_truth, compute_deriv=False)
         return
     
-    def computeVector(self, U : Tensor, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
+    @abstractmethod
+    def computeVector(self, U : Tensor, compute_deriv=False) -> Tuple[np.ndarray, Any]:
+        raise NotImplementedError()
+    
+    @abstractmethod
+    def adjoint_jvp(self, jac: Any, vec: np.ndarray) -> np.ndarray:
         raise NotImplementedError()
     
     def computeScalar(self, U : Tensor) -> np.floating:
@@ -44,13 +73,32 @@ class Goal:
         F = np.linalg.norm(diff)**2
         return F
 
-    def computeGrad(self, U : Tensor) -> np.ndarray:
-        raise NotImplementedError()
+    def computeGrad(self, U : Tensor):
+        vec, jac = self.computeVector(U, compute_deriv=True)
+        return self.adjoint_jvp(jac, vec)
 
 
-class PhysicsGoal(Goal):
+class TimeSeparableGoal(Goal):
+    """
+    Let G = TimeSeparableGoal( ground_truth, var, time ), and let U 
+    be a Tensor of shape G.domain_shape. If
 
-    def __init__(self, ground_truth : Tensor, var, time):
+        (vec, jac) = G.computeVector( U, compute_deriv=True )
+
+    then vec.shape == (G.time.size,) and jac.shape == G.domain_shape.
+
+    The map from U to vec must be separable; vec[i] can only depend on
+    U[ ..., G.var, i ]. This limited dependence makes it possible to
+    pack the entire Jacobian into jac, which is a far smaller array
+    than a naively-stored Jacobian. See the docstring of computeVector
+    for a full specification of jac.
+
+    Riley note for @Eric: it seems like this class hard-codes to use
+    two spatial dimensions, but goated.utils.exo::ExoInfo can handle
+    three spatial dimensions. 
+    """
+
+    def __init__(self, ground_truth : Tensor, var: ArrayLike, time: ArrayLike):
         if not isinstance(var, np.ndarray):
             var = np.array(var)
         if not isinstance(time, np.ndarray):
@@ -58,42 +106,64 @@ class PhysicsGoal(Goal):
         self.var  : np.ndarray = var
         self.time : np.ndarray = time
         super().__init__(ground_truth)
-        jac_m, jac_n = self.domain_shape[:2]
-        i1 = np.arange(jac_m)  # arange of domain_shape[0]
-        i2 = np.arange(jac_n)  # arange of domain_shape[1]
-        i3 = self.var          # subset of arange domain_shape[2]
-        i4 = self.time         # subset of arange domain_shape[3]
+
+        self.cached_jac : np.ndarray = np.empty(())
+        i1 = np.arange(self.domain_shape[0])
+        i2 = np.arange(self.domain_shape[1])
+        i3 = self.var   # subset of arange domain_shape[2]
+        i4 = self.time  # subset of arange domain_shape[3]
         self._nonconst_indices : tuple[np.ndarray,...] = np.ix_(i1, i2, i3, i4)
+        # Riley note/question for @Eric:
+        # 
+        #   It seems like this class hard-codes to use two spatial dimensions,
+        #   but goated.utils.exo::ExoInfo can handle three spatial dimensions.
+        #   I think the more general approach is 
+        # 
+        #       ix_args = [np.arange(n) for n in self.domain_shape[:-2]]
+        #       ix_args.append(self.var)
+        #       ix_args.append(self.time)
+        #       self._nonconst_indices = np.ix_(*ix_args)
+        #  
+        #   Do you agree with that?
+        # 
         self.DEBUG = False
 
-    def grad_from_vec_and_jac(self, v, j):
-        diff = v - self.target
-        grad = j.copy()
-        grad[self._nonconst_indices] *= 2*np.reshape(diff, (1,1,1) + self.target.shape)
-        # Question: can I do away with the self._grad_indices, and just use
-        #   broadcast_dims = (1,)*(jac.ndim - self.target.ndim)
-        #   jac[:] *= 2*np.reshape(diff, broadcast_dims + self.target.shape)
-        # ?
-        return grad
-    
     def computeVector(self, U : Tensor, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        TODO: document the meaning of "jac" in the returned pair (vec, jac), to be consistent
-        with self.grad_from_vec_and_jac(...).
-
-        (There is no default implementation for PhysicsGoal, but there should be documentation
-         explaining what conformant implementations do.)
-        """
+        # No implementation. This is here for type annotation and to set
+        # the specs for jac.
+        #
+        # (*) U.shape == (nx, ny, nv, nt)
+        #
+        # (*) vec is length nt
+        #
+        # (*) for each i,
+        #       vec[i] is a function of U[:,:,:,i], which is a tensor of
+        #       size (nx, ny, nv).
+        #
+        #       jac[:,:,:,i] is the derivative of vec[i] with respect
+        #       to U[:,:,:,i].
+        #
         raise NotImplementedError()
+
+    def adjoint_jvp(self, jac: np.ndarray, v: np.ndarray):
+        grad = jac.copy()
+        temp = 2*np.reshape(v, self._nonconst_indices[-1].shape)
+        grad[self._nonconst_indices] *= temp 
+        # ^ left-hand and right-hand sides have different shapes,
+        #   but the multiplication is resolved by broadcasting temp.
+        #
+        #   Riley note/question for @Eric: I find the broadcast surprising.
+        #   Is this relying on the goals being an integral (or sum) over
+        #   the first three modes of the tensor?
+        return grad
 
     def computeGrad(self, U : Tensor, use_cached: bool):
         if use_cached:
             vec, jac = self.cached_vec, self.cached_jac
         else:
             vec, jac = self.computeVector(U, compute_deriv=True)
-            # ^ It seems weird that vec.size is a different shape than jac.shape[-1].
-            #   ... what is the derivative with respect to?
-        return self.grad_from_vec_and_jac(vec, jac)
+        diff = vec - self.target
+        return self.adjoint_jvp(jac, diff)
 
     def _gn_hessvec(self, Md) -> np.ndarray:
         i3 = self.var
@@ -165,12 +235,12 @@ class PhysicsGoal(Goal):
 
 class Goals:
     """
-    Constituent PhysicsGoal objects define their targets in terms 
+    Constituent TimeSeparableGoal objects define their targets in terms 
     of the un-scaled tensor, but GocchaObjective works in terms of
     a scaled tensor. So this class maintains its own scaler.
     """
 
-    def __init__(self, scaler, goals : List[PhysicsGoal], weights : Optional[Sequence[float] | np.ndarray] = None):
+    def __init__(self, scaler, goals : List[TimeSeparableGoal], weights : Optional[Sequence[float] | np.ndarray] = None):
         assert len(goals) > 0
         self.scaler = scaler
         self.goals = goals
@@ -214,6 +284,9 @@ class Goals:
             Yg += w * g.computeGrad(self.Mfs, use_cached_jacs)
         Yg = tensor(Yg)
         Yg = self.scaler.unscale_tensor(Yg, shift=False)
+        # ^ That's there because of the chain rule; we applied
+        #   unscale_tensor to get our hands on Mfs in the first
+        #   place.
         self._grad : tensor = Yg
         return
 
@@ -227,6 +300,8 @@ class Goals:
             jac_dot = g._gn_hessvec(Md)
             Yd += w*jac_dot
         Yd = self.scaler.unscale_tensor(Yd, shift=False)
+        # ^ That's there because of the chain rule; we applied
+        #   unscale_tensor to Md.
         return Yd
 
     def eval_goals(self, U: tensor, scaled=False):   
@@ -243,7 +318,7 @@ class Goals:
 
 class CPGoals(Goals):
 
-    def __init__(self, scaler, goals: List[PhysicsGoal], weights: Sequence[float] | np.ndarray | None = None):
+    def __init__(self, scaler, goals: List[TimeSeparableGoal], weights: Sequence[float] | np.ndarray | None = None):
         super().__init__(scaler, goals, weights)
         self.M : ktensor = ktensor()
 
@@ -254,7 +329,7 @@ class CPGoals(Goals):
 
 class TuckerGoals(Goals):
 
-    def __init__(self, scaler, goals: List[PhysicsGoal], weights: Sequence[float] | np.ndarray | None = None):
+    def __init__(self, scaler, goals: List[TimeSeparableGoal], weights: Sequence[float] | np.ndarray | None = None):
         super().__init__(scaler, goals, weights)
         self.M : ttensor = ttensor()
         return

@@ -7,7 +7,7 @@ Decompositions..." D. Dunlavy et al., 2025).
 
 import numpy as np
 import matplotlib.pyplot as plt
-from goated.goals.abstract import PhysicsGoal
+from goated.goals.abstract import TimeSeparableGoal
 from goated.utils.exo import ExoInfo
 from typing import Tuple
 
@@ -276,7 +276,7 @@ def plot_energies(X,u,rho_var,T_var,mom_var,B_var,time_ind,time_val,exo,scaler):
     return fig,axs
     
 
-class MomentumGoal(PhysicsGoal):
+class MomentumGoal(TimeSeparableGoal):
     def __init__(self, X, var, time, exo):
         self.exo = exo
         super().__init__(X, var, time)
@@ -285,7 +285,7 @@ class MomentumGoal(PhysicsGoal):
         return compute_momentum(U,self.var,self.time,self.exo,compute_deriv)
 
 
-class InternalEnergyGoal(PhysicsGoal):
+class InternalEnergyGoal(TimeSeparableGoal):
     def __init__(self, X, var, time, exo):
         self.exo = exo
         super().__init__(X, var, time)
@@ -294,7 +294,7 @@ class InternalEnergyGoal(PhysicsGoal):
         return compute_internal_energy(U,self.var,self.time,self.exo,compute_deriv)
 
 
-class MagneticEnergyGoal(PhysicsGoal):
+class MagneticEnergyGoal(TimeSeparableGoal):
     def __init__(self, X, var, time, exo):
         self.exo = exo
         super().__init__(X, var, time)
@@ -303,7 +303,7 @@ class MagneticEnergyGoal(PhysicsGoal):
         return compute_magnetic_energy(U,self.var,self.time,self.exo,compute_deriv)
 
 
-class KineticEnergyGoal(PhysicsGoal):
+class KineticEnergyGoal(TimeSeparableGoal):
     def __init__(self, X, var, time, exo):
         self.exo = exo
         super().__init__(X, var, time)
@@ -312,7 +312,7 @@ class KineticEnergyGoal(PhysicsGoal):
         return compute_kinetic_energy(U,self.var,self.time,self.exo,compute_deriv)
 
 
-class TotalEnergyGoal(PhysicsGoal):
+class TotalEnergyGoal(TimeSeparableGoal):
     def __init__(self, X, var, time, exo):
         self.exo = exo
         super().__init__(X, var, time)

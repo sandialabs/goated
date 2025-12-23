@@ -4,7 +4,7 @@ import numpy as np
 import goated.utils.linops as linops
 from goated.abstractobj import LowRankObjective
 from collections import defaultdict
-from goated.goals.abstract import Goal, PhysicsGoal, TuckerGoals
+from goated.goals.abstract import Goal, TimeSeparableGoal, TuckerGoals
 from typing import Tuple, List, Optional, Sequence
 import time as _time
 

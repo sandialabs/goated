@@ -46,7 +46,10 @@ class LowRankObjective(ABC):
     @abstractmethod
     def _tangent_reconstructed_tensor(self, V: LowRankTensor_t) -> tensor:
         """ 
-        TODO: write docstring
+        # GN Hessian-vector product: J' (J v)
+        #   This function computes w = J v is
+        #   Machinery for J'w is the same as backprop to compute the gradient.
+        #       (Gradient is this with w = (diff between target - model).)
         """
         pass
 
