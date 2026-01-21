@@ -88,14 +88,10 @@ class TimeSeparableGoal(Goal):
     then vec.shape == (G.time.size,) and jac.shape == G.domain_shape.
 
     The map from U to vec must be separable; vec[i] can only depend on
-    U[ ..., G.var, i ]. This limited dependence makes it possible to
+    U[ ..., G.var, G.time[i] ]. This limited dependence makes it possible to
     pack the entire Jacobian into jac, which is a far smaller array
     than a naively-stored Jacobian. See the docstring of computeVector
     for a full specification of jac.
-
-    Riley note for @Eric: it seems like this class hard-codes to use
-    two spatial dimensions, but goated.utils.exo::ExoInfo can handle
-    three spatial dimensions. 
     """
 
     def __init__(self, ground_truth : Tensor, var: ArrayLike, time: ArrayLike):
@@ -106,55 +102,62 @@ class TimeSeparableGoal(Goal):
         self.var  : np.ndarray = var
         self.time : np.ndarray = time
         super().__init__(ground_truth)
+        # ^ computes self.domain_shape and self.target.
+        assert np.all((0 <= self.var)  & (self.var  < self.domain_shape[-2]))
+        assert np.all((0 <= self.time) & (self.time < self.domain_shape[-1]))
 
         self.cached_jac : np.ndarray = np.empty(())
-        i1 = np.arange(self.domain_shape[0])
-        i2 = np.arange(self.domain_shape[1])
-        i3 = self.var   # subset of arange domain_shape[2]
-        i4 = self.time  # subset of arange domain_shape[3]
-        self._nonconst_indices : tuple[np.ndarray,...] = np.ix_(i1, i2, i3, i4)
-        # Riley note/question for @Eric:
+        index_vecs = [np.arange(d) for d in self.domain_shape[:-2]]
+        index_vecs.append(self.var)
+        index_vecs.append(self.time)
+        self._nonconst_indices : tuple[np.ndarray,...] = np.ix_(*index_vecs)
+        # ^ If someone calls `self.computeVector` with a Tensor `U` and no error
+        #   is raised, then the expression `U[self._nonconst_indices]` is well-formed,
+        #   it evaluates to a Tensor, and the value returned from `self.computeVector`
+        #   will only depend on `U` by way of `U[self._nonconst_indices]`.
+        #
+        #   ...
         # 
-        #   It seems like this class hard-codes to use two spatial dimensions,
-        #   but goated.utils.exo::ExoInfo can handle three spatial dimensions.
-        #   I think the more general approach is 
-        # 
-        #       ix_args = [np.arange(n) for n in self.domain_shape[:-2]]
-        #       ix_args.append(self.var)
-        #       ix_args.append(self.time)
-        #       self._nonconst_indices = np.ix_(*ix_args)
-        #  
-        #   Do you agree with that?
-        # 
+        #   If you're wondering what np.ix_ actually does, the basic idea can be seen
+        #   when called with two arguments. Given row indices `I`, column indices `J`,
+        #   and an ndarray `X`, we'll have elementwise equality
+        #     
+        #       X[np.ix_(I, J)] == np.array([[X[i,j] for j in J] for i in I]).
+        #     
+        #   Put another way, np.ix_(I, J) returns an object that can be used for
+        #   selecting a sub-array given by the Cartesian product of `I` and `J`.
+        #   This idea generalizes easily to three or more dimensions with calls
+        #   like `np.ix_(I, J, K)`, etc ...
+        #   
         self.DEBUG = False
 
     def computeVector(self, U : Tensor, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
-        # No implementation. This is here for type annotation and to set
-        # the specs for jac.
-        #
-        # (*) U.shape == (nx, ny, nv, nt)
-        #
-        # (*) vec is length nt
-        #
-        # (*) for each i,
-        #       vec[i] is a function of U[:,:,:,i], which is a tensor of
-        #       size (nx, ny, nv).
-        #
-        #       jac[:,:,:,i] is the derivative of vec[i] with respect
-        #       to U[:,:,:,i].
-        #
+        """
+        Return a pair of ndarrays, (vec, compact_jac), satisfying the conditions
+        described below in terms of U_full = U.double() (the numpy ndarray
+        representation of U).
+        
+          (1) vec.ndim == 1 and vec.size == self.time.size.
+
+          (2) vec only depends on U_full[ ..., self.var, self.time], and
+              the dependence is separable with respect to time. Specifically,
+              vec[i] only depends on U_full[ ..., self.var, self.time[i] ].
+        
+          (3) If compute_deriv is True, then compact_jac.shape == self.domain_shape
+              and compact_jac[ ..., self.time[i] ] is the derivative of vec[i] with
+              respect to U_full[ ..., self.time[i] ].
+
+        """
         raise NotImplementedError()
 
-    def adjoint_jvp(self, jac: np.ndarray, v: np.ndarray):
-        grad = jac.copy()
+    def adjoint_jvp(self, compact_jac: np.ndarray, v: np.ndarray):    
+        grad = compact_jac.copy()
+        assert grad.shape == self.domain_shape
         temp = 2*np.reshape(v, self._nonconst_indices[-1].shape)
         grad[self._nonconst_indices] *= temp 
         # ^ left-hand and right-hand sides have different shapes,
         #   but the multiplication is resolved by broadcasting temp.
         #
-        #   Riley note/question for @Eric: I find the broadcast surprising.
-        #   Is this relying on the goals being an integral (or sum) over
-        #   the first three modes of the tensor?
         return grad
 
     def computeGrad(self, U : Tensor, use_cached: bool):
@@ -166,6 +169,7 @@ class TimeSeparableGoal(Goal):
         return self.adjoint_jvp(jac, diff)
 
     def _gn_hessvec(self, Md) -> np.ndarray:
+        # TODO: extend this to handle arbitrarily-many "spatial" dimensions.
         i3 = self.var
         i4 = self.time
         jac = self.cached_jac
@@ -196,6 +200,7 @@ class TimeSeparableGoal(Goal):
         return jac_dot
 
     def _tucker_gn_block_diag_goal_updates(self, w: float, M: ttensor, scaler, factor_cols: list[list]):
+        # TODO: extend this to handle arbitrarily-many "spatial" dimensions.
         scale = np.sqrt(2 * w)
         jac   = self.cached_jac
         shape = self.domain_shape
