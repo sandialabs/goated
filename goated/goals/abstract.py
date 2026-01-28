@@ -192,7 +192,7 @@ class TimeSeparableGoal(Goal):
 
         # compute dot gradient tensor dF/dM(i,j,v,t)
         jac_dot = np.zeros_like(jac)
-        val_dot_promoted = val_dot[*((jac.ndim - 2)*(None,)), :]
+        val_dot_promoted = val_dot[*((jac.ndim - 1)*(None,)), :]
         jac_dot[self._nonconst_indices] = 2 * val_dot_promoted * jac_sub
 
         if self.DEBUG:
