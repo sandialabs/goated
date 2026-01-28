@@ -168,47 +168,52 @@ class TimeSeparableGoal(Goal):
         diff = vec - self.target
         return self.adjoint_jvp(jac, diff)
 
+
+    _EINSUM_CHARS = ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i','j', 'k', 'l', 'm', 'n')
+
     def _gn_hessvec(self, Md) -> np.ndarray:
         # TODO: extend this to handle arbitrarily-many "spatial" dimensions.
         i3 = self.var
         i4 = self.time
         jac = self.cached_jac
-        jact = jac[ :, :, :, i4 ]
-        Mdt  =  Md[ :, :, :, i4 ]
+        jact = jac[ ..., i4 ]
+        Mdt  =  Md[ ..., i4 ]
+
         val_dot = np.zeros((i4.size,))
-        val_dot[:] = np.einsum('hijk,hijk->k', jact[:,:,i3,:], Mdt[:,:,i3,:])
+        einsum_spec = ''.join(TimeSeparableGoal._EINSUM_CHARS[:jac.ndim])
+        einsum_spec = f'{einsum_spec},{einsum_spec}->{einsum_spec[-1]}'
+        val_dot[:] = np.einsum(einsum_spec, jact[..., i3, :], Mdt[..., i3, :])
+
         if self.DEBUG:
             vd = np.zeros((i4.size,))
-            for i in range(i4.size):
-                vd[i] = np.reshape(jac[:,:,i3,i4[i]],(1,-1),order='F') @ np.reshape(Md[:,:,i3,i4[i]],(-1,1),order='F')
+            for i, ti in enumerate(i4):
+                vd[i] = np.reshape(jac[:,:,i3,ti],(1,-1),order='F') @ np.reshape(Md[:,:,i3,ti],(-1,1),order='F')
             assert np.linalg.norm(vd - val_dot) <= 1e-8 * np.maximum(1.0, np.linalg.norm(vd))
 
         # compute dot gradient tensor dF/dM(i,j,v,t)
         jac_dot = np.zeros(jac.shape)
         mask_t  = np.zeros(jac.shape, dtype=bool)
         mask_v  = np.zeros(jac.shape, dtype=bool)
-        mask_t[:,:,:,i4] = True
-        mask_v[:,:,i3,:]  = True 
+        mask_t[...,  :, i4] = True  # last index
+        mask_v[..., i3,  :] = True  # penultimate index
         ro = 'C'  # doesn't matter, just be explicit.
         mask = (mask_t & mask_v).ravel(order=ro)
-        jac_dot.ravel(order=ro)[mask] = (2*val_dot[None,None,:]*jact[:,:,i3,:]).ravel(order=ro)
+        jac_dot.ravel(order=ro)[mask] = (2*val_dot[None,None,:]*jact[..., i3, :]).ravel(order=ro)
         if self.DEBUG:
             jd = np.zeros(jac.shape)
-            for i in range(i4.size):
-                jd[:,:,i3,i4[i]] = 2*val_dot[i]*jac[:,:,i3,i4[i]]
+            for i, ti in enumerate(i4):
+                jd[..., i3, ti] = 2*val_dot[i]*jac[..., i3, ti]
             assert np.linalg.norm(jac_dot - jd) <= 1e-8 * np.maximum(1.0, np.linalg.norm(jd))
         return jac_dot
 
     def _tucker_gn_block_diag_goal_updates(self, w: float, M: ttensor, scaler, factor_cols: list[list]):
-        # TODO: extend this to handle arbitrarily-many "spatial" dimensions.
         scale = np.sqrt(2 * w)
         jac   = self.cached_jac
         shape = self.domain_shape
         jac_mat_shape = shape[:-1] + (1,)
         ndim = len(shape)
-        i4 = self.time
-        for t in i4:
-            jac_t = tensor(jac[:,:,:,t], shape=jac_mat_shape, copy=False)
+        for t in self.time:
+            jac_t = tensor(jac[..., t], shape=jac_mat_shape, copy=False)
             jac_t = scaler.unscale_tensor(jac_t, shift=False)
             for n in range(ndim):
                 mats, dims = [], []
