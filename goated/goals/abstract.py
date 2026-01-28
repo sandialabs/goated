@@ -173,37 +173,38 @@ class TimeSeparableGoal(Goal):
 
     def _gn_hessvec(self, Md) -> np.ndarray:
         # TODO: extend this to handle arbitrarily-many "spatial" dimensions.
-        i3 = self.var
-        i4 = self.time
+        i_pen = self.var
+        i_end = self.time
         jac = self.cached_jac
-        jact = jac[ ..., i4 ]
-        Mdt  =  Md[ ..., i4 ]
+        jact = jac[ ..., i_end ]
+        Mdt  =  Md[ ..., i_end ]
 
-        val_dot = np.zeros((i4.size,))
+        val_dot = np.zeros((i_end.size,))
         einsum_spec = ''.join(TimeSeparableGoal._EINSUM_CHARS[:jac.ndim])
         einsum_spec = f'{einsum_spec},{einsum_spec}->{einsum_spec[-1]}'
-        val_dot[:] = np.einsum(einsum_spec, jact[..., i3, :], Mdt[..., i3, :])
+        val_dot[:] = np.einsum(einsum_spec, jact[..., i_pen, :], Mdt[..., i_pen, :])
 
         if self.DEBUG:
-            vd = np.zeros((i4.size,))
-            for i, ti in enumerate(i4):
-                vd[i] = np.reshape(jac[:,:,i3,ti],(1,-1),order='F') @ np.reshape(Md[:,:,i3,ti],(-1,1),order='F')
-            assert np.linalg.norm(vd - val_dot) <= 1e-8 * np.maximum(1.0, np.linalg.norm(vd))
+            val_dot_ref = np.zeros((i_end.size,))
+            for k, i_k in enumerate(i_end):
+                val_dot_ref[k] = np.vdot(jac[..., i_pen, i_k], Md[..., i_pen, i_k])
+            assert np.linalg.norm(val_dot - val_dot_ref) <= 1e-8 * np.maximum(1.0, np.linalg.norm(val_dot_ref))
 
         # compute dot gradient tensor dF/dM(i,j,v,t)
         jac_dot = np.zeros(jac.shape)
         mask_t  = np.zeros(jac.shape, dtype=bool)
         mask_v  = np.zeros(jac.shape, dtype=bool)
-        mask_t[...,  :, i4] = True  # last index
-        mask_v[..., i3,  :] = True  # penultimate index
+        mask_t[...,  :, i_end] = True  # last index
+        mask_v[..., i_pen,  :] = True  # penultimate index
         ro = 'C'  # doesn't matter, just be explicit.
         mask = (mask_t & mask_v).ravel(order=ro)
-        jac_dot.ravel(order=ro)[mask] = (2*val_dot[None,None,:]*jact[..., i3, :]).ravel(order=ro)
+        val_dot_promoted = val_dot[*((jac.ndim - 2)*(None,)), :]
+        jac_dot.ravel(order=ro)[mask] = (2 * val_dot_promoted * jact[..., i_pen, :]).ravel(order=ro)
         if self.DEBUG:
-            jd = np.zeros(jac.shape)
-            for i, ti in enumerate(i4):
-                jd[..., i3, ti] = 2*val_dot[i]*jac[..., i3, ti]
-            assert np.linalg.norm(jac_dot - jd) <= 1e-8 * np.maximum(1.0, np.linalg.norm(jd))
+            jac_dot_ref = np.zeros(jac.shape)
+            for k, i_k in enumerate(i_end):
+                jac_dot_ref[..., i_pen, i_k] = 2 * val_dot[k] * jac[..., i_pen, i_k]
+            assert np.linalg.norm(jac_dot - jac_dot_ref) <= 1e-8 * np.maximum(1.0, np.linalg.norm(jac_dot_ref))
         return jac_dot
 
     def _tucker_gn_block_diag_goal_updates(self, w: float, M: ttensor, scaler, factor_cols: list[list]):
