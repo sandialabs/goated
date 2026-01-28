@@ -129,7 +129,7 @@ class TimeSeparableGoal(Goal):
         #   This idea generalizes easily to three or more dimensions with calls
         #   like `np.ix_(I, J, K)`, etc ...
         #   
-        self.DEBUG = False
+        self.DEBUG = True
 
     def computeVector(self, U : Tensor, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -172,32 +172,33 @@ class TimeSeparableGoal(Goal):
     _EINSUM_CHARS = ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i','j', 'k', 'l', 'm', 'n')
 
     def _gn_hessvec(self, Md) -> np.ndarray:
-        i_pen = self.var   # penultimate index
-        i_end = self.time  # ending/last index 
         jac = self.cached_jac
-        jact = jac[ ..., i_end ]
-        Mdt  =  Md[ ..., i_end ]
+        jac_sub = jac[..., *np.ix_(self.var, self.time)]
+        Md_sub  =  Md[..., *np.ix_(self.var, self.time)]
 
-        val_dot = np.zeros((i_end.size,))
         einsum_spec = ''.join(TimeSeparableGoal._EINSUM_CHARS[:jac.ndim])
+        # ^ that's a string == (first jac.ndim letters of the alphabet)
         einsum_spec = f'{einsum_spec},{einsum_spec}->{einsum_spec[-1]}'
-        val_dot[:] = np.einsum(einsum_spec, jact[..., i_pen, :], Mdt[..., i_pen, :])
+        # ^ when jac.ndim == 3, that's "abc,abc->c",
+        #   when jac.ndim == 4, that's "abcd,abcd->d", and so on ...
+        val_dot = np.einsum(einsum_spec, jac_sub, Md_sub)
+        assert val_dot.shape == (self.time.size,)
 
         if self.DEBUG:
-            val_dot_ref = np.zeros((i_end.size,))
-            for k, i_k in enumerate(i_end):
-                val_dot_ref[k] = np.vdot(jac[..., i_pen, i_k], Md[..., i_pen, i_k])
+            val_dot_ref = np.zeros_like(val_dot)
+            for k, t_k in enumerate(self.time):
+                val_dot_ref[k] = np.vdot(jac[..., self.var, t_k], Md[..., self.var, t_k])
             assert np.linalg.norm(val_dot - val_dot_ref) <= 1e-8 * np.maximum(1.0, np.linalg.norm(val_dot_ref))
 
         # compute dot gradient tensor dF/dM(i,j,v,t)
-        jac_dot = np.zeros(jac.shape)
+        jac_dot = np.zeros_like(jac)
         val_dot_promoted = val_dot[*((jac.ndim - 2)*(None,)), :]
-        jac_dot[self._nonconst_indices] = 2 * val_dot_promoted * jact[..., i_pen, :]
+        jac_dot[self._nonconst_indices] = 2 * val_dot_promoted * jac_sub
 
         if self.DEBUG:
-            jac_dot_ref = np.zeros(jac.shape)
-            for k, i_k in enumerate(i_end):
-                jac_dot_ref[..., i_pen, i_k] = 2 * val_dot[k] * jac[..., i_pen, i_k]
+            jac_dot_ref = np.zeros_like(jac_dot)
+            for k, t_k in enumerate(self.time):
+                jac_dot_ref[..., self.var, t_k] = 2 * val_dot[k] * jac[..., self.var, t_k]
             assert np.linalg.norm(jac_dot - jac_dot_ref) <= 1e-8 * np.maximum(1.0, np.linalg.norm(jac_dot_ref))
 
         return jac_dot
