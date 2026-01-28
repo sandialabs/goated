@@ -172,9 +172,8 @@ class TimeSeparableGoal(Goal):
     _EINSUM_CHARS = ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i','j', 'k', 'l', 'm', 'n')
 
     def _gn_hessvec(self, Md) -> np.ndarray:
-        # TODO: extend this to handle arbitrarily-many "spatial" dimensions.
-        i_pen = self.var
-        i_end = self.time
+        i_pen = self.var   # penultimate index
+        i_end = self.time  # ending/last index 
         jac = self.cached_jac
         jact = jac[ ..., i_end ]
         Mdt  =  Md[ ..., i_end ]
@@ -192,19 +191,15 @@ class TimeSeparableGoal(Goal):
 
         # compute dot gradient tensor dF/dM(i,j,v,t)
         jac_dot = np.zeros(jac.shape)
-        mask_t  = np.zeros(jac.shape, dtype=bool)
-        mask_v  = np.zeros(jac.shape, dtype=bool)
-        mask_t[...,  :, i_end] = True  # last index
-        mask_v[..., i_pen,  :] = True  # penultimate index
-        ro = 'C'  # doesn't matter, just be explicit.
-        mask = (mask_t & mask_v).ravel(order=ro)
         val_dot_promoted = val_dot[*((jac.ndim - 2)*(None,)), :]
-        jac_dot.ravel(order=ro)[mask] = (2 * val_dot_promoted * jact[..., i_pen, :]).ravel(order=ro)
+        jac_dot[self._nonconst_indices] = 2 * val_dot_promoted * jact[..., i_pen, :]
+
         if self.DEBUG:
             jac_dot_ref = np.zeros(jac.shape)
             for k, i_k in enumerate(i_end):
                 jac_dot_ref[..., i_pen, i_k] = 2 * val_dot[k] * jac[..., i_pen, i_k]
             assert np.linalg.norm(jac_dot - jac_dot_ref) <= 1e-8 * np.maximum(1.0, np.linalg.norm(jac_dot_ref))
+
         return jac_dot
 
     def _tucker_gn_block_diag_goal_updates(self, w: float, M: ttensor, scaler, factor_cols: list[list]):
