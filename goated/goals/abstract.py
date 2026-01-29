@@ -54,6 +54,7 @@ class Goal(ABC):
 
     def __init__(self, ground_truth : Tensor, **kwargs) -> None:
         self.domain_shape = ground_truth.shape
+        self.domain_ndim  = ground_truth.ndims
         self.cached_vec  : np.ndarray = np.empty(())
         self.cached_jac  : Optional[Any] = None
         self.target, _ = self.computeVector(ground_truth, compute_deriv=False)
@@ -107,28 +108,21 @@ class TimeSeparableGoal(Goal):
         assert np.all((0 <= self.time) & (self.time < self.domain_shape[-1]))
 
         self.cached_jac : np.ndarray = np.empty(())
-        index_vecs = [np.arange(d) for d in self.domain_shape[:-2]]
-        index_vecs.append(self.var)
-        index_vecs.append(self.time)
-        self._nonconst_indices : tuple[np.ndarray,...] = np.ix_(*index_vecs)
-        # ^ If someone calls `self.computeVector` with a Tensor `U` and no error
-        #   is raised, then the expression `U[self._nonconst_indices]` is well-formed,
-        #   it evaluates to a Tensor, and the value returned from `self.computeVector`
-        #   will only depend on `U` by way of `U[self._nonconst_indices]`.
+        self._var_cross_time = np.ix_(self.var, self.time)
+        # ^ That helps us extract rectangular sub-arrays from a larger array.
         #
-        #   ...
-        # 
-        #   If you're wondering what np.ix_ actually does, the basic idea can be seen
-        #   when called with two arguments. Given row indices `I`, column indices `J`,
-        #   and an ndarray `X`, we'll have elementwise equality
-        #     
-        #       X[np.ix_(I, J)] == np.array([[X[i,j] for j in J] for i in I]).
-        #     
-        #   Put another way, np.ix_(I, J) returns an object that can be used for
-        #   selecting a sub-array given by the Cartesian product of `I` and `J`.
-        #   This idea generalizes easily to three or more dimensions with calls
-        #   like `np.ix_(I, J, K)`, etc ...
-        #   
+        #   As an abstract example, if we have index vectors I and J (they could 
+        #   be tuples, lists, or ndarrays with ndim==1), and a 2d-array X, then
+        #   X[np.ix_(I, J)] == X[I, :][:, J] holds elementwise.
+        #
+        #   The output can also be used to index into tensors. If U is an
+        #   n-dimensional array with n > 2, then
+        #
+        #       U[..., *np.ix_(I, J)] = U[..., I, :][..., J]
+        #
+        #   holds elementwise. (Note the use of the unpacking operator `*`
+        #   in this latter example.)
+        #
         self.DEBUG = True
 
     def computeVector(self, U : Tensor, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
@@ -151,14 +145,14 @@ class TimeSeparableGoal(Goal):
         raise NotImplementedError()
 
     def adjoint_jvp(self, compact_jac: np.ndarray, v: np.ndarray):    
-        grad = compact_jac.copy()
-        assert grad.shape == self.domain_shape
-        temp = 2*np.reshape(v, self._nonconst_indices[-1].shape)
-        grad[self._nonconst_indices] *= temp 
+        g = compact_jac.copy()
+        assert g.shape == self.domain_shape
+        assert v.shape == (self.time.size,)
+        broadcast_helper   = (self.domain_ndim-1)*(None,)
+        g[..., *self._var_cross_time] *= 2*v[*broadcast_helper, :]
         # ^ left-hand and right-hand sides have different shapes,
-        #   but the multiplication is resolved by broadcasting temp.
-        #
-        return grad
+        #   but the multiplication is resolved by broadcasting.
+        return g
 
     def computeGrad(self, U : Tensor, use_cached: bool):
         if use_cached:
@@ -168,19 +162,17 @@ class TimeSeparableGoal(Goal):
         diff = vec - self.target
         return self.adjoint_jvp(jac, diff)
 
-
     _EINSUM_CHARS = ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i','j', 'k', 'l', 'm', 'n')
 
     def _gn_hessvec(self, Md) -> np.ndarray:
         jac = self.cached_jac
-        jac_sub = jac[..., *np.ix_(self.var, self.time)]
-        Md_sub  =  Md[..., *np.ix_(self.var, self.time)]
+        jac_sub = jac[..., *self._var_cross_time]
+        Md_sub  =  Md[..., *self._var_cross_time]
 
-        einsum_spec = ''.join(TimeSeparableGoal._EINSUM_CHARS[:jac.ndim])
-        # ^ that's a string == (first jac.ndim letters of the alphabet)
+        einsum_spec = ''.join(TimeSeparableGoal._EINSUM_CHARS[:self.domain_ndim])
+        # ^ that's a string == (first self.domain_ndim letters of the alphabet)
         einsum_spec = f'{einsum_spec},{einsum_spec}->{einsum_spec[-1]}'
-        # ^ when jac.ndim == 3, that's "abc,abc->c",
-        #   when jac.ndim == 4, that's "abcd,abcd->d", and so on ...
+        # ^ that's something like "abc,abc->c", or "abcd,abcd->d", etc ...
         val_dot = np.einsum(einsum_spec, jac_sub, Md_sub)
         assert val_dot.shape == (self.time.size,)
 
@@ -192,8 +184,8 @@ class TimeSeparableGoal(Goal):
 
         # compute dot gradient tensor dF/dM(i,j,v,t)
         jac_dot = np.zeros_like(jac)
-        val_dot_promoted = val_dot[*((jac.ndim - 1)*(None,)), :]
-        jac_dot[self._nonconst_indices] = 2 * val_dot_promoted * jac_sub
+        broadcast_helper = (jac.ndim - 1)*(None,)
+        jac_dot[..., *self._var_cross_time] = 2 *  val_dot[*broadcast_helper, :] * jac_sub
 
         if self.DEBUG:
             jac_dot_ref = np.zeros_like(jac_dot)
