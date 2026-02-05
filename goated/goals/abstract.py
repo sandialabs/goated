@@ -102,12 +102,6 @@ class TimeSeparableGoal(Goal):
             time = np.array(time)
         self.var  : np.ndarray = var
         self.time : np.ndarray = time
-        super().__init__(ground_truth)
-        # ^ computes self.domain_shape and self.target.
-        assert np.all((0 <= self.var)  & (self.var  < self.domain_shape[-2]))
-        assert np.all((0 <= self.time) & (self.time < self.domain_shape[-1]))
-
-        self.cached_jac : np.ndarray = np.empty(())
         self._var_cross_time = np.ix_(self.var, self.time)
         # ^ That helps us extract rectangular sub-arrays from a larger array.
         #
@@ -123,8 +117,14 @@ class TimeSeparableGoal(Goal):
         #   holds elementwise. (Note the use of the unpacking operator `*`
         #   in this latter example.)
         #
-        self.DEBUG = True
+        super().__init__(ground_truth)
+        # ^ computes self.domain_shape and self.target.
+        assert np.all((0 <= self.var)  & (self.var  < self.domain_shape[-2]))
+        assert np.all((0 <= self.time) & (self.time < self.domain_shape[-1]))
+        self.cached_jac : np.ndarray = np.empty(())
+        self.DEBUG = False
 
+    @abstractmethod
     def computeVector(self, U : Tensor, compute_deriv=False) -> Tuple[np.ndarray, np.ndarray]:
         """
         Return a pair of ndarrays, (vec, compact_jac), satisfying the conditions
