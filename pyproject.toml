@@ -12,7 +12,7 @@ dependencies = [
     "scipy",
     "tqdm",
     "pyttb",
-    "pyrol"
+    "rol-python"
 ]
 requires-python = ">=3.11"
 
