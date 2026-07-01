@@ -12,7 +12,8 @@ dependencies = [
     "scipy",
     "tqdm",
     "pyttb",
-    "rol-python"
+    "rol-python",
+    "pytest"
 ]
 requires-python = ">=3.11"
 
