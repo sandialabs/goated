@@ -11,4 +11,4 @@ After downloading the code, GOATED can be easily installed via `pip install ./go
 
 ## Usage
 
-Examples for goal-oriented CP and Tucker are provided in the Jupyter notebooks in the examples directory that apply these methods to a smaller version of the Tearing Sheet plasma physics data described in the above publication (currently that data set is not provided in the repository but will be added in the very near future)..
+Examples for goal-oriented CP and Tucker are provided in the Jupyter notebooks in the examples directory that apply these methods to a smaller version of the Tearing Sheet plasma physics data described in the above publication (currently that data set is not provided in the repository but will be made available in the very near future).
