@@ -13,11 +13,11 @@ dependencies = [
     "tqdm",
     "pyttb",
     "rol-python",
-    "pytest"
+    "pytest",
+    "netCDF4"
 ]
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-exo = ["netCDF4"]
 genten = ["pygenten"]
 dask = ["dask"]
