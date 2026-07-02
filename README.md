@@ -6,9 +6,8 @@ GOATED is a pure-python implementation of the goal-oriented Canonical Polyadic (
 
 ## Installation
 
-After downloading the code, GOATED can be easily installed via `pip install ./goated` which will install all needed dependencies.  Note, pyrol only supplies precompiled python wheels for a limited number of architectures, so pip is likely to build a wheel from source.  Optional depencies include
-* Exodus (`pip install "./goated[exo]"`):  Needed for the example Jupyter notebooks for reading simulation data stored in the Exodus format.
+After downloading the code, GOATED can be easily installed via `pip install ./goated` which will install all needed dependencies.  Note, pyrol only supplies precompiled python wheels for a limited number of architectures, so pip is likely to build a wheel from source.  
 
 ## Usage
 
-Examples for goal-oriented CP and Tucker are provided in the Jupyter notebooks in the examples directory that apply these methods to a smaller version of the Tearing Sheet plasma physics data described in the above publication (currently that data set is not provided in the repository but will be made available in the very near future).
+Examples for goal-oriented CP and Tucker are provided in the Jupyter notebooks in the examples directory that apply these methods to a smaller version of the Tearing Sheet plasma physics data described in the above publication.
