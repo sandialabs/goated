@@ -1,7 +1,10 @@
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import netCDF4 as nc
+import zipfile
 from goated.utils.exo import ExoInfo
 
 
@@ -95,6 +98,32 @@ def test_read_and_slice(tmp_path):
     # elem_ind: zero-based version of [[1,2,4,3]]
     assert exo.elem_ind.shape == (1,4)
     np.testing.assert_array_equal(exo.elem_ind, np.array([[0,1,3,2]]))
+
+
+def test_read_sheet_from_zip(tmp_path):
+    fn = make_synthetic_exodus(tmp_path)
+    archive_path = f"{fn}.zip"
+    with zipfile.ZipFile(archive_path, "w") as zf:
+        zf.write(fn, arcname=fn.split("/")[-1])
+
+    # remove the uncompressed file so the loader must fall back to the zip archive
+    import os
+    os.remove(fn)
+
+    exo = ExoInfo()
+    exo.read_sheet(fn, z_slice=0.0)
+
+    assert np.allclose(exo.z, [0.0])
+    assert exo.tensor_data.shape == (2, 2, 2, 3)
+
+
+def test_read_sheet_accepts_path_object(tmp_path):
+    fn = make_synthetic_exodus(tmp_path)
+    exo = ExoInfo()
+    exo.read_sheet(Path(fn), z_slice=0.0)
+
+    assert np.allclose(exo.z, [0.0])
+    assert exo.tensor_data.shape == (2, 2, 2, 3)
 
 
 def test_compute_det_jac():

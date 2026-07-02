@@ -1,7 +1,10 @@
+import math
+import os
+import zipfile
+from typing import Callable
+
 import numpy as np
 import pyttb as ttb
-import math
-from typing import Callable
  
 
 class ExoInfo:
@@ -79,8 +82,8 @@ class ExoInfo:
 
         Parameters
         ----------
-        file_name : str
-            Path to an Exodus-II netCDF file.
+        file_name : str or os.PathLike
+            Path to an Exodus-II netCDF file. Path-like objects such as pathlib.Path are supported.
         z_slice : float, optional
             Which z-coordinate to extract.  Only nodes exactly at this z will
             be included in the planar slice.
@@ -92,9 +95,27 @@ class ExoInfo:
             z-value remains after slicing.
         """
         import netCDF4 as nc
+
+        path = os.fspath(file_name)
+
+        if not os.path.exists(path):
+            archive_path = path + ".zip"
+            if os.path.exists(archive_path):
+                archive_dir = os.path.dirname(path) or "."
+                os.makedirs(archive_dir, exist_ok=True)
+                with zipfile.ZipFile(archive_path, 'r') as zf:
+                    zf.extractall(archive_dir)
+                if not os.path.exists(path):
+                    raise FileNotFoundError(
+                        f"Could not find the requested Exodus file '{path}' after extracting '{archive_path}'."
+                    )
+            else:
+                raise FileNotFoundError(
+                    f"Could not find the requested Exodus file '{path}' or its zip archive '{archive_path}'."
+                )
         
         # Read file
-        d = nc.Dataset(file_name,'r')
+        d = nc.Dataset(path,'r')
 
         # Get dimensions
         num_var = len(d.dimensions['num_nod_var'])
