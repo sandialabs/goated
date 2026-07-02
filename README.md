@@ -6,7 +6,7 @@ GOATED is a pure-python implementation of the goal-oriented Canonical Polyadic (
 
 ## Installation
 
-After downloading the code, GOATED can be easily installed via `pip install ./goated` which will install all needed dependencies.  Note, pyrol only supplies precompiled python wheels for a limited number of architectures, so pip is likely to build a wheel from source.  
+After downloading the code, GOATED can be easily installed via `pip install ./goated` which will install all needed dependencies.  Note, pyrol only supplies precompiled python wheels for a limited number of architectures, so pip is likely to build a wheel from source.  The code can then be tested via `pytest goated/goated/tests`.
 
 ## Usage
 
