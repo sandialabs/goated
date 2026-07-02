@@ -2,3 +2,6 @@
 goated/__pycache__
 goated/**/__pycache__
 goated.egg-info/*
+__MACOSX
+build
+goated/examples/small.exo
